@@ -24,7 +24,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -36,6 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class WebServerIntegrationTest {
 
@@ -155,6 +159,14 @@ class WebServerIntegrationTest {
     }
 
     private int startServer(int aiPort, ServerConfig.TransportConfig transport) {
+        return startServer(aiPort, transport, ServerConfig.LoggingConfig.disabled());
+    }
+
+    private int startServer(
+        int aiPort,
+        ServerConfig.TransportConfig transport,
+        ServerConfig.LoggingConfig logging
+    ) {
         ServerConfig cfg = new ServerConfig(
             "127.0.0.1",
             0,
@@ -164,6 +176,7 @@ class WebServerIntegrationTest {
             3,
             50,
             transport,
+            logging,
             new ServerConfig.PublicIpLookupConfig(false, "https://api.ipify.org", 1000),
             new ServerConfig.AiServerConfig("127.0.0.1", aiPort, 1000, 1500, 4)
         );
@@ -525,6 +538,102 @@ class WebServerIntegrationTest {
             assertEquals(4, movementReply.get("lastMove").get("from").asInt());
             assertEquals(1, movementReply.get("lastMove").get("to").asInt());
         }
+    }
+
+    @Test
+    void endToEndJsonlAuditLogRecordsServerLifecycleHttpAccessConnectionsModesAndProxyTrust(@TempDir Path tempDir)
+        throws Exception {
+        // Verify client IP extraction honors X-Forwarded-For ONLY when trustProxyHeaders=true.
+        assertEquals("198.51.100.7", GameWebSocketHandler.resolveClientIp("198.51.100.7", "203.0.113.9, 10.0.0.1", false));
+        assertEquals("203.0.113.9", GameWebSocketHandler.resolveClientIp("198.51.100.7", "203.0.113.9, 10.0.0.1", true));
+
+        Path auditFile = tempDir.resolve("audit.log");
+        ServerConfig.LoggingConfig logging = new ServerConfig.LoggingConfig(
+            true,
+            auditFile.toString(),
+            true,
+            false,
+            10,
+            5
+        );
+        int port = startServer(findClosedPort(), ServerConfig.TransportConfig.defaults(), logging);
+        webServer.auditLogger().logServerStart(
+            new com.tictactoe.net.ResolvedAddresses("127.0.0.1", port, "192.168.1.50", "100.64.0.10", null),
+            webServer.config().aiServer().baseUrl(),
+            com.tictactoe.ai.AiStatus.offline("test")
+        );
+
+        HttpClient http = HttpClient.newHttpClient();
+        http.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/health"))
+                .header("X-Forwarded-For", "9.9.9.9")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString()
+        );
+
+        try (TestWsClient client = TestWsClient.connect(port)) {
+            client.send("{\"type\":\"JOIN_LOBBY\",\"username\":\"Auditor\"}");
+            client.awaitMessage("WELCOME");
+            client.send("{\"type\":\"START_LOCAL_GAME\"}");
+            client.awaitMessage("MATCH_FOUND");
+            client.awaitMessage("GAME_STATE");
+            // Quick X win on top row {0, 1, 2}
+            int[] moves = {0, 3, 1, 4, 2};
+            for (int cell : moves) {
+                client.send("{\"type\":\"PLACE_PIECE\",\"to\":" + cell + "}");
+                client.awaitMessage("GAME_STATE");
+            }
+            client.send("{\"type\":\"LEAVE_MATCH\"}");
+            client.awaitMessage("MATCH_LEFT");
+        }
+
+        webServer.stopWithAudit("TEST_STOP", 123L);
+        webServer = null;
+
+        List<String> lines = Files.readAllLines(auditFile, StandardCharsets.UTF_8);
+        assertTrue(lines.size() >= 7, "Expected complete audit trail, got " + lines.size() + " lines");
+
+        List<JsonNode> events = lines.stream().map(line -> {
+            try {
+                return MAPPER.readTree(line);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }).toList();
+
+        assertEquals("SERVER_START", events.get(0).get("event").asText());
+        assertEquals("SERVER_STOP", events.get(events.size() - 1).get("event").asText());
+
+        // HTTP_ACCESS ignored spoofed X-Forwarded-For (trustProxyHeaders=false) and recorded real socket IP 127.0.0.1.
+        JsonNode httpEv = events.stream()
+            .filter(e -> "HTTP_ACCESS".equals(e.get("event").asText()) && "/api/health".equals(e.get("path").asText()))
+            .findFirst()
+            .orElseThrow();
+        assertEquals("127.0.0.1", httpEv.get("ip").asText());
+        assertEquals(200, httpEv.get("status").asInt());
+
+        assertTrue(events.stream().anyMatch(
+            e -> "WS_CONNECT".equals(e.get("event").asText()) && "127.0.0.1".equals(e.get("ip").asText())
+        ));
+        assertTrue(events.stream().anyMatch(
+            e -> "LOBBY_JOIN".equals(e.get("event").asText()) && "Auditor".equals(e.get("username").asText())
+        ));
+        assertTrue(events.stream().anyMatch(
+            e -> "MATCH_START".equals(e.get("event").asText()) && "LOCAL_PVP".equals(e.get("mode").asText())
+        ));
+
+        // Exactly ONE MATCH_END must be emitted (LEAVE_MATCH after X_WINS must not duplicate it).
+        List<JsonNode> matchEnds = events.stream()
+            .filter(e -> "MATCH_END".equals(e.get("event").asText()))
+            .toList();
+        assertEquals(1, matchEnds.size());
+        assertEquals("X_WINS", matchEnds.get(0).get("status").asText());
+        assertEquals("COMPLETED", matchEnds.get(0).get("reason").asText());
+
+        assertTrue(events.stream().anyMatch(
+            e -> "WS_DISCONNECT".equals(e.get("event").asText()) && "Auditor".equals(e.get("username").asText())
+        ));
     }
 
     private static void sendJson(HttpExchange exchange, int status, String json) throws IOException {
