@@ -278,8 +278,11 @@ public final class GameMatch {
     }
 
     /**
-     * Registers a rematch request. For {@code VS_AI} and {@code LOCAL_PVP}, resets immediately.
-     * For {@code ONLINE_PVP}, resets once both participants have requested a rematch (alternating starter).
+     * Registers a rematch/restart request.
+     *
+     * <p>For {@code VS_AI} and {@code LOCAL_PVP}, resets immediately (also allowed mid-game as a quick restart).
+     * For {@code ONLINE_PVP}, only allowed once the current game has ended, resetting once both participants
+     * request a rematch (alternating the starting player).
      *
      * @return true if the match was reset and is ready to play again; false if waiting for opponent vote
      */
@@ -292,6 +295,9 @@ public final class GameMatch {
         }
 
         if (mode == MatchMode.ONLINE_PVP) {
+            if (!engine.getStatus().isTerminal()) {
+                throw new IllegalStateException("Online rematch is only available after the match ends");
+            }
             rematchVotes.add(sessionId);
             if (rematchVotes.size() < 2) {
                 return false;

@@ -46,7 +46,7 @@
                         >
                         <button id="btn-join-lobby" class="btn btn-primary" type="submit">Continue</button>
                     </div>
-                    <p class="field-hint">2–20 characters: letters, numbers, spaces, <code>_</code>, <code>-</code>, or <code>.</code></p>
+                    <p class="field-hint"><span id="username-range">2–20</span> characters: letters, numbers, spaces, <code>_</code>, <code>-</code>, or <code>.</code></p>
                 </form>
 
                 <div class="rules-box">
@@ -54,7 +54,7 @@
                     <ul>
                         <li><strong>Phase 1 — Placement:</strong> Take turns placing up to <strong>3 pieces</strong> each on any empty node.</li>
                         <li><strong>Phase 2 — Movement:</strong> Once all 3 pieces are placed, select one of your pieces and slide it along a connected line to an adjacent empty node (perimeter neighbors or center).</li>
-                        <li><strong>Win or Draw:</strong> First player to align 3 in a row wins. Repeated positions (3x) or 50 movement plies end in a draw.</li>
+                        <li><strong>Win or Draw:</strong> First player to align 3 in a row wins. Repeated positions (<span id="rule-repetition-limit">3</span>x) or <span id="rule-max-plies">50</span> movement plies end in a draw.</li>
                     </ul>
                 </div>
             </section>

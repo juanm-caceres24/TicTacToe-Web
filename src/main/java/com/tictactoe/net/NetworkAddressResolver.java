@@ -101,7 +101,7 @@ public final class NetworkAddressResolver {
 
     /**
      * Selects the best Tailscale IPv4 address from a list of active interface addresses.
-     * Prefers interfaces explicitly named {@code tailscale*} or {@code utun*} in {@code 100.64.0.0/10}.
+     * Prefers interfaces explicitly named {@code tailscale*} or {@code ts*} in {@code 100.64.0.0/10}.
      */
     public static String selectTailscaleIp(List<InterfaceAddress> addresses) {
         Objects.requireNonNull(addresses, "addresses must not be null");
@@ -219,28 +219,85 @@ public final class NetworkAddressResolver {
                 return false;
             }
         }
-        if (candidate.contains(".")) {
-            String[] parts = candidate.split("\\.", -1);
-            if (parts.length != 4) {
+        if (candidate.contains(".") && !candidate.contains(":")) {
+            return isValidIpv4Literal(candidate);
+        }
+        if (candidate.contains(":") && !candidate.contains(".")) {
+            return isValidIpv6Literal(candidate);
+        }
+        return false;
+    }
+
+    private static boolean isValidIpv4Literal(String candidate) {
+        String[] parts = candidate.split("\\.", -1);
+        if (parts.length != 4) {
+            return false;
+        }
+        for (String part : parts) {
+            if (part.isEmpty() || part.length() > 3) {
                 return false;
             }
-            for (String part : parts) {
-                if (part.isEmpty() || part.length() > 3) {
-                    return false;
-                }
-                for (int i = 0; i < part.length(); i++) {
-                    if (!Character.isDigit(part.charAt(i))) {
-                        return false;
-                    }
-                }
-                int octet = Integer.parseInt(part);
-                if (octet < 0 || octet > 255) {
+            for (int i = 0; i < part.length(); i++) {
+                if (!Character.isDigit(part.charAt(i))) {
                     return false;
                 }
             }
-            return true;
+            int octet = Integer.parseInt(part);
+            if (octet < 0 || octet > 255) {
+                return false;
+            }
         }
-        return candidate.contains(":");
+        return true;
+    }
+
+    private static boolean isValidIpv6Literal(String candidate) {
+        if (candidate.contains(":::")) {
+            return false;
+        }
+        int doubleColonIdx = candidate.indexOf("::");
+        if (doubleColonIdx != -1) {
+            // At most one "::" compression is valid in RFC 4291.
+            if (candidate.indexOf("::", doubleColonIdx + 2) != -1) {
+                return false;
+            }
+            String left = candidate.substring(0, doubleColonIdx);
+            String right = candidate.substring(doubleColonIdx + 2);
+            int leftGroups = countValidHexGroups(left);
+            int rightGroups = countValidHexGroups(right);
+            if (leftGroups < 0 || rightGroups < 0) {
+                return false;
+            }
+            return (leftGroups + rightGroups) < 8;
+        }
+        if (candidate.startsWith(":") || candidate.endsWith(":")) {
+            return false;
+        }
+        return countValidHexGroups(candidate) == 8;
+    }
+
+    private static int countValidHexGroups(String segment) {
+        if (segment.isEmpty()) {
+            return 0;
+        }
+        if (segment.startsWith(":") || segment.endsWith(":")) {
+            return -1;
+        }
+        String[] groups = segment.split(":", -1);
+        for (String group : groups) {
+            if (group.isEmpty() || group.length() > 4) {
+                return -1;
+            }
+            for (int i = 0; i < group.length(); i++) {
+                char c = group.charAt(i);
+                boolean isHex = (c >= '0' && c <= '9')
+                    || (c >= 'a' && c <= 'f')
+                    || (c >= 'A' && c <= 'F');
+                if (!isHex) {
+                    return -1;
+                }
+            }
+        }
+        return groups.length;
     }
 
     private static List<InterfaceAddress> enumerateActiveIpv4Interfaces() {

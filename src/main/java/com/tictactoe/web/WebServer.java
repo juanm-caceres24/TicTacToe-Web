@@ -13,10 +13,6 @@ import java.util.Objects;
  */
 public final class WebServer implements AutoCloseable {
 
-    private static final long MAX_HTTP_REQUEST_BYTES = 64L * 1024L;
-    private static final long MAX_WS_TEXT_BYTES = 8L * 1024L;
-    private static final Duration WS_IDLE_TIMEOUT = Duration.ofMinutes(5);
-
     private final ServerConfig config;
     private final NeuralNetworkClient aiClient;
     private final MatchManager matchManager;
@@ -31,21 +27,22 @@ public final class WebServer implements AutoCloseable {
     }
 
     private Javalin createJavalinApp() {
+        ServerConfig.TransportConfig transport = config.transport();
         Javalin javalin = Javalin.create(cfg -> {
             cfg.showJavalinBanner = false;
-            cfg.http.maxRequestSize = MAX_HTTP_REQUEST_BYTES;
+            cfg.http.maxRequestSize = transport.maxHttpRequestBytes();
             cfg.staticFiles.add(staticFiles -> {
                 staticFiles.hostedPath = "/";
                 staticFiles.directory = "/web";
                 staticFiles.location = Location.CLASSPATH;
             });
             cfg.jetty.modifyWebSocketServletFactory(factory -> {
-                factory.setIdleTimeout(WS_IDLE_TIMEOUT);
-                factory.setMaxTextMessageSize(MAX_WS_TEXT_BYTES);
+                factory.setIdleTimeout(Duration.ofSeconds(transport.wsIdleTimeoutSeconds()));
+                factory.setMaxTextMessageSize(transport.maxWsMessageBytes());
             });
         });
 
-        new RestController(matchManager).register(javalin);
+        new RestController(config, matchManager).register(javalin);
         new GameWebSocketHandler(matchManager).register(javalin);
         return javalin;
     }
