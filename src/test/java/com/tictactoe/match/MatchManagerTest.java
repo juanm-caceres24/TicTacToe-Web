@@ -6,10 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import com.tictactoe.ai.NeuralNetworkClient;
+import com.tictactoe.audit.AuditLogger;
 import com.tictactoe.config.ServerConfig;
 import com.tictactoe.engine.Move;
 import com.tictactoe.engine.Player;
@@ -20,6 +22,8 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -32,6 +36,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class MatchManagerTest {
 
@@ -576,6 +581,153 @@ class MatchManagerTest {
         assertEquals(0, manager.queueSize());
         assertEquals(0, manager.activeMatchCount());
         assertFalse(manager.activeMatchCount() < 0);
+    }
+
+    @Test
+    void auditTrailCoversOnlineQueueDeduplicationModeSwitchRematchDisconnectShutdownAndAsyncAiWin(
+        @TempDir Path tempDir
+    ) throws Exception {
+        // Controlled AI whose top preferences are cells 4, 2, 6 -> diagonal {2, 4, 6} wins on AI's 3rd move!
+        int aiPort = startControlledAiWithPrefs(new int[] {4, 2, 6});
+        Path logFile = tempDir.resolve("match-audit.log");
+        ServerConfig cfg = new ServerConfig(
+            "127.0.0.1",
+            0,
+            10,
+            2,
+            20,
+            3,
+            50,
+            ServerConfig.TransportConfig.defaults(),
+            new ServerConfig.LoggingConfig(true, logFile.toString(), false, false, 10, 2),
+            new ServerConfig.PublicIpLookupConfig(false, "https://api.ipify.org", 1000),
+            new ServerConfig.AiServerConfig("127.0.0.1", aiPort, 500, 1500, 4)
+        );
+
+        try (AuditLogger audit = AuditLogger.open(logFile, 1024 * 1024L, 2);
+             MatchManager audited = new MatchManager(cfg, new NeuralNetworkClient(cfg.aiServer()), audit)) {
+
+            FakeSender alice = new FakeSender();
+            FakeSender bob = new FakeSender();
+            audited.registerSession("sa", "192.168.1.10", alice);
+            audited.registerSession("sb", "192.168.1.11", bob);
+            audited.handleJoinLobby("sa", "Alice");
+            audited.handleJoinLobby("sb", "Bob");
+
+            // Duplicate QUEUE_ONLINE must emit QUEUE_JOIN only once; switching straight to LOCAL_PVP emits QUEUE_CANCEL.
+            audited.handleQueueOnline("sa");
+            audited.handleQueueOnline("sa");
+            audited.handleStartLocalGame("sa");
+
+            // Mid-game PLAY_AGAIN on LOCAL_PVP logs MATCH_END(RESTARTED) + MATCH_START(rematch=true).
+            audited.handlePlayAgain("sa");
+
+            // Switching from LOCAL_PVP to ONLINE_PVP pairs with Bob, completes a win, rematches, then Bob disconnects.
+            audited.handleQueueOnline("sa");
+            audited.handleQueueOnline("sb");
+            audited.handleMove("sa", Move.placement(0));
+            audited.handleMove("sb", Move.placement(3));
+            audited.handleMove("sa", Move.placement(1));
+            audited.handleMove("sb", Move.placement(4));
+            audited.handleMove("sa", Move.placement(2)); // Alice wins ONLINE_PVP
+            audited.handlePlayAgain("sa");
+            audited.handlePlayAgain("sb"); // rematch=true starts round 2
+            audited.unregisterSession("sb", 1001); // abandons round 2 with reason=DISCONNECT
+
+            // VS_AI where AI (O) moves first and wins asynchronously on diagonal {2, 4, 6}.
+            alice.clear();
+            audited.handleStartAiGame("sa", Player.X, true);
+            alice.awaitMessage(
+                ProtocolMessages.GameStateMessage.class,
+                gs -> !gs.aiThinking() && "X".equals(gs.currentTurn())
+            );
+            audited.handleMove("sa", Move.placement(0)); // AI replies on 2
+            alice.awaitMessage(
+                ProtocolMessages.GameStateMessage.class,
+                gs -> !gs.aiThinking() && gs.piecesPlaced().get("O") == 2
+            );
+            audited.handleMove("sa", Move.placement(1)); // AI replies on 6 -> O_WINS!
+            ProtocolMessages.GameStateMessage aiWin = alice.awaitMessage(
+                ProtocolMessages.GameStateMessage.class,
+                gs -> !gs.aiThinking() && "O_WINS".equals(gs.status())
+            );
+            assertEquals("O_WINS", aiWin.status());
+
+            // Start one more LOCAL_PVP left active at MatchManager.close() -> logs SERVER_SHUTDOWN.
+            audited.handleStartLocalGame("sa");
+        }
+
+        List<JsonNode> events = Files.readAllLines(logFile, StandardCharsets.UTF_8).stream()
+            .map(l -> {
+                try {
+                    return MAPPER.readTree(l);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            })
+            .toList();
+
+        // Duplicate QUEUE_ONLINE emitted only 2 QUEUE_JOIN total (first queue + second queue before Bob joined).
+        long queueJoins = events.stream().filter(e -> "QUEUE_JOIN".equals(e.get("event").asText())).count();
+        assertEquals(2L, queueJoins);
+
+        // Switching from queue to LOCAL_PVP emitted QUEUE_CANCEL.
+        assertTrue(events.stream().anyMatch(
+            e -> "QUEUE_CANCEL".equals(e.get("event").asText()) && "Alice".equals(e.get("username").asText())
+        ));
+
+        // Rematch starts logged with rematch=true.
+        assertTrue(events.stream().anyMatch(
+            e -> "MATCH_START".equals(e.get("event").asText())
+                && "ONLINE_PVP".equals(e.get("mode").asText())
+                && e.get("rematch").asBoolean()
+        ));
+
+        // All distinct MATCH_END reasons verified: RESTARTED, SWITCH_MODE, COMPLETED (ONLINE_PVP + async VS_AI), DISCONNECT, SERVER_SHUTDOWN.
+        assertTrue(events.stream().anyMatch(
+            e -> "MATCH_END".equals(e.get("event").asText()) && "RESTARTED".equals(e.get("reason").asText())
+        ));
+        assertTrue(events.stream().anyMatch(
+            e -> "MATCH_END".equals(e.get("event").asText()) && "DISCONNECT".equals(e.get("reason").asText())
+                && "ABANDONED".equals(e.get("status").asText())
+        ));
+        assertTrue(events.stream().anyMatch(
+            e -> "MATCH_END".equals(e.get("event").asText())
+                && "VS_AI".equals(e.get("mode").asText())
+                && "O_WINS".equals(e.get("status").asText())
+                && "NeuralNetwork AI".equals(e.get("winner").asText())
+                && "COMPLETED".equals(e.get("reason").asText())
+        ));
+        assertTrue(events.stream().anyMatch(
+            e -> "MATCH_END".equals(e.get("event").asText()) && "SERVER_SHUTDOWN".equals(e.get("reason").asText())
+        ));
+    }
+
+    private int startControlledAiWithPrefs(int[] preferredCells) throws IOException {
+        mockAi = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        mockAi.setExecutor(Executors.newCachedThreadPool());
+        mockAi.createContext("/health", ex -> sendJson(ex, 200, "{\"status\":\"ok\"}"));
+        mockAi.createContext("/info", ex -> sendJson(
+            ex,
+            200,
+            "{\"input_size\":9,\"output_size\":41,\"num_layers\":3,\"parameters\":23081}"
+        ));
+        mockAi.createContext("/predict", ex -> {
+            double[] scores = new double[41];
+            double weight = 0.95;
+            for (int cell : preferredCells) {
+                scores[cell] = weight;
+                weight -= 0.10;
+            }
+            for (int i = 0; i < 41; i++) {
+                if (scores[i] == 0.0) {
+                    scores[i] = 0.01 * (i + 1) / 41.0;
+                }
+            }
+            sendJson(ex, 200, "{\"output\":" + MAPPER.writeValueAsString(scores) + ",\"latency_us\":9}");
+        });
+        mockAi.start();
+        return mockAi.getAddress().getPort();
     }
 
     private int startControlledAi(

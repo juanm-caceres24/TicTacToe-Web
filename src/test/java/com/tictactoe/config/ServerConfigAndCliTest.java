@@ -128,7 +128,9 @@ class ServerConfigAndCliTest {
 
         assertThrows(IllegalArgumentException.class, () -> new ServerConfig.LoggingConfig(true, "  ", true, false, 10, 5));
         assertThrows(IllegalArgumentException.class, () -> new ServerConfig.LoggingConfig(true, "logs/a.log", true, false, 0, 5));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.LoggingConfig(true, "logs/a.log", true, false, 1025, 5));
         assertThrows(IllegalArgumentException.class, () -> new ServerConfig.LoggingConfig(true, "logs/a.log", true, false, 10, -1));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.LoggingConfig(true, "logs/a.log", true, false, 10, 101));
 
         assertThrows(IllegalArgumentException.class, () -> new ServerConfig.PublicIpLookupConfig(true, "ftp://ip.test", 1000));
         assertThrows(IllegalArgumentException.class, () -> new ServerConfig.PublicIpLookupConfig(true, "http:///nohost", 1000));
