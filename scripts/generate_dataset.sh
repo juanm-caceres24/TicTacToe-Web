@@ -9,7 +9,7 @@ cd "${PROJECT_ROOT}"
 for arg in "$@"; do
     if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
         if [[ ! -d target/classes ]]; then
-            mvn -q test-compile
+            mvn -q compile
         fi
         exec java -cp target/classes com.tictactoe.DatasetGenMain --help
     fi

@@ -79,18 +79,21 @@ class DatasetExporterAndCliTest {
         assertTrue(oneHotLines.get(0).startsWith("c0,c1,c2,c3,c4,c5,c6,c7,c8,a0,"));
         assertTrue(oneHotLines.get(0).endsWith(",a40"));
 
-        String firstDataRow = oneHotLines.get(1);
-        String[] cols = firstDataRow.split(",", -1);
-        int ones = 0;
-        for (int a = 0; a < 41; a++) {
-            double v = Double.parseDouble(cols[9 + a]);
-            if (v == 1.0) {
-                ones++;
-            } else {
-                assertEquals(0.0, v, 1e-9);
+        // Validate every single one-hot data row has strictly one 1.0 and forty 0.0 targets.
+        for (int r = 1; r < oneHotLines.size(); r++) {
+            String[] cols = oneHotLines.get(r).split(",", -1);
+            assertEquals(50, cols.length);
+            int ones = 0;
+            for (int a = 0; a < 41; a++) {
+                double v = Double.parseDouble(cols[9 + a]);
+                if (v == 1.0) {
+                    ones++;
+                } else {
+                    assertEquals(0.0, v, 1e-9);
+                }
             }
+            assertEquals(1, ones, "Row " + r + " must have strictly one 1.0 target");
         }
-        assertEquals(1, ones);
     }
 
     @Test
@@ -116,11 +119,17 @@ class DatasetExporterAndCliTest {
         Path out = tempDir.resolve("cli_out.csv");
         assertEquals(0, DatasetGenMain.run(new String[] {
             "--output", out.toString(),
-            "--target-mode", "soft",
+            "--target-mode", "onehot",
+            "--header",
+            "--no-shuffle",
             "--seed", "7"
         }));
         assertTrue(Files.isRegularFile(out));
 
+        // Writing to an existing directory path triggers IOException -> exit code 1.
+        assertEquals(1, DatasetGenMain.run(new String[] {"--output", tempDir.toString()}));
+
+        assertEquals(1, DatasetGenMain.run(new String[] {"--output", "   "}));
         assertEquals(1, DatasetGenMain.run(new String[] {"--seed", "not-a-number"}));
         assertEquals(1, DatasetGenMain.run(new String[] {"--target-mode", "bogus"}));
         assertEquals(1, DatasetGenMain.run(new String[] {"--unknown-flag"}));

@@ -59,11 +59,50 @@ class NetworkAddressResolverTest {
     }
 
     @Test
-    void validatesIpLiteralsAndRejectsHtmlNoise() {
+    void classifiesPrivateLanLinkLocalAndTailscalePriorityEdgeCases() throws IOException {
+        assertTrue(NetworkAddressResolver.isPrivateLanIpv4(ipv4("10.0.0.1")));
+        assertFalse(NetworkAddressResolver.isPrivateLanIpv4(ipv4("172.15.255.255")));
+        assertTrue(NetworkAddressResolver.isPrivateLanIpv4(ipv4("172.16.0.1")));
+        assertTrue(NetworkAddressResolver.isPrivateLanIpv4(ipv4("172.31.255.254")));
+        assertFalse(NetworkAddressResolver.isPrivateLanIpv4(ipv4("172.32.0.1")));
+        assertTrue(NetworkAddressResolver.isPrivateLanIpv4(ipv4("192.168.0.1")));
+
+        // Empty list returns null for both.
+        assertNull(NetworkAddressResolver.selectLocalLanIp(List.of()));
+        assertNull(NetworkAddressResolver.selectTailscaleIp(List.of()));
+
+        // Link-local 169.254.x.x is skipped; non-RFC1918 fallback is selected only when no private NIC exists.
+        List<NetworkAddressResolver.InterfaceAddress> linkLocalAndPublic = List.of(
+            new NetworkAddressResolver.InterfaceAddress("eth0", ipv4("169.254.10.20")),
+            new NetworkAddressResolver.InterfaceAddress("wg-docker0", ipv4("192.168.50.1")),
+            new NetworkAddressResolver.InterfaceAddress("eth1", ipv4("203.0.113.5"))
+        );
+        assertEquals("203.0.113.5", NetworkAddressResolver.selectLocalLanIp(linkLocalAndPublic));
+
+        // Explicit ts0/tailscale0 takes priority over generic interface in 100.64.0.0/10.
+        List<NetworkAddressResolver.InterfaceAddress> multipleCgnat = List.of(
+            new NetworkAddressResolver.InterfaceAddress("eth0", ipv4("100.64.0.9")),
+            new NetworkAddressResolver.InterfaceAddress("ts0", ipv4("100.99.1.2"))
+        );
+        assertEquals("100.99.1.2", NetworkAddressResolver.selectTailscaleIp(multipleCgnat));
+    }
+
+    @Test
+    void validatesIpLiteralsAndRejectsHtmlAndMalformedIpv6Noise() {
         assertTrue(NetworkAddressResolver.isValidIpLiteral("181.45.12.90"));
         assertTrue(NetworkAddressResolver.isValidIpLiteral("2001:db8::1"));
+        assertTrue(NetworkAddressResolver.isValidIpLiteral("::1"));
+        assertTrue(NetworkAddressResolver.isValidIpLiteral("2001:0db8:85a3:0000:0000:8a2e:0370:7334"));
+
         assertFalse(NetworkAddressResolver.isValidIpLiteral("999.1.2.3"));
         assertFalse(NetworkAddressResolver.isValidIpLiteral("<html><body>502</body></html>"));
+        assertFalse(NetworkAddressResolver.isValidIpLiteral(":"));
+        assertFalse(NetworkAddressResolver.isValidIpLiteral(":::"));
+        assertFalse(NetworkAddressResolver.isValidIpLiteral("abc:"));
+        assertFalse(NetworkAddressResolver.isValidIpLiteral(":abc"));
+        assertFalse(NetworkAddressResolver.isValidIpLiteral("2001:db8::1::2"));
+        assertFalse(NetworkAddressResolver.isValidIpLiteral("12345::1"));
+        assertFalse(NetworkAddressResolver.isValidIpLiteral("2001:db8:1:2:3:4:5:6:7"));
         assertFalse(NetworkAddressResolver.isValidIpLiteral(""));
         assertFalse(NetworkAddressResolver.isValidIpLiteral(null));
     }
@@ -124,6 +163,10 @@ class NetworkAddressResolverTest {
         assertTrue(partialBanner.contains("Tailscale   : unavailable"));
         assertTrue(partialBanner.contains("Public      : unavailable"));
         assertTrue(partialBanner.contains("OFFLINE | connection refused"));
+
+        ResolvedAddresses ipv6Public = new ResolvedAddresses("0.0.0.0", 3000, "192.168.1.42", null, "2001:db8::1");
+        String ipv6Banner = ipv6Public.formatStartupBanner(null, null);
+        assertTrue(ipv6Banner.contains("http://[2001:db8::1]:3000"));
     }
 
     private static void sendText(com.sun.net.httpserver.HttpExchange exchange, int status, String body)

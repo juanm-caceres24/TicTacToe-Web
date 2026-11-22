@@ -6,7 +6,7 @@ A standalone Java 21 web server for **Mobile Tic-Tac-Toe** (*Three Men's Morris*
 - **Local PvP** on the same screen.
 - **Responsive web UI** designed for both desktop and mobile browsers across LAN, Tailscale, and port-forwarded public connections.
 
-> **Current Status:** Stage 5 (`v0.5.0`) — Complete release with responsive desktop/mobile frontend, SVG two-phase board, online matchmaking, local PvP, and `NeuralNetwork` AI integration.
+> **Current Status:** `v0.5.1` — Complete, audit-hardened release with responsive desktop/mobile frontend, SVG two-phase board, online matchmaking, local PvP, and `NeuralNetwork` AI integration.
 
 ---
 
@@ -36,7 +36,7 @@ A standalone Java 21 web server for **Mobile Tic-Tac-Toe** (*Three Men's Morris*
 ./scripts/test_api.sh
 ```
 
-Override any `configs/server.json` option at launch time:
+Override key `configs/server.json` options at launch time (`--config`, `--host`, `--port`, `--ai-host`, `--ai-port`, `--no-public-ip`):
 
 ```bash
 ./scripts/run.sh --port 3000 --ai-host 127.0.0.1 --ai-port 8080
@@ -73,7 +73,7 @@ TicTacToe-Web/
     │   │   ├── Main.java                  # Server entry point (--help, CLI overrides, IP banner)
     │   │   ├── DatasetGenMain.java        # CLI entry point for optimal dataset generation
     │   │   ├── engine/                    # Pure Mobile Tic-Tac-Toe engine & MoveEncoder
-    │   │   ├── config/                    # ServerConfig JSON loader & CliArgs parser
+    │   │   ├── config/                    # ServerConfig JSON loader, CliArgs parser & BuildInfo
     │   │   ├── net/                       # LAN, Tailscale (100.64.0.0/10), and Public IP resolver
     │   │   ├── ai/                        # HTTP/1.1 NeuralNetworkClient (/health, /info, /predict)
     │   │   ├── solver/                    # Cycle-free RetrogradeSolver & DatasetExporter

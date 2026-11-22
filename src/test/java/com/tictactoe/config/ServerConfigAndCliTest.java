@@ -21,9 +21,14 @@ class ServerConfigAndCliTest {
         assertEquals("0.0.0.0", config.host());
         assertEquals(3000, config.port());
         assertEquals(100, config.maxConcurrentMatches());
+        assertEquals(2, config.minUsernameLength());
         assertEquals(20, config.maxUsernameLength());
         assertEquals(3, config.repetitionLimit());
         assertEquals(50, config.maxMovementPlies());
+
+        assertEquals(65_536L, config.transport().maxHttpRequestBytes());
+        assertEquals(8_192L, config.transport().maxWsMessageBytes());
+        assertEquals(300, config.transport().wsIdleTimeoutSeconds());
 
         assertTrue(config.publicIpLookup().enabled());
         assertEquals("https://api.ipify.org", config.publicIpLookup().url());
@@ -34,6 +39,8 @@ class ServerConfigAndCliTest {
         assertEquals("http://127.0.0.1:8080", config.aiServer().baseUrl());
         assertEquals(2000, config.aiServer().connectTimeoutMs());
         assertEquals(3000, config.aiServer().requestTimeoutMs());
+        assertEquals(4, config.aiServer().workerThreads());
+        assertEquals(ServerConfig.defaults(), config);
     }
 
     @Test
@@ -61,31 +68,76 @@ class ServerConfigAndCliTest {
         assertEquals("100.64.1.2", merged.aiServer().host());
         assertEquals(9090, merged.aiServer().port());
         assertFalse(merged.publicIpLookup().enabled());
+
+        // Empty overrides leave defaults intact.
+        ServerConfig unchanged = ServerConfig.defaults().withOverrides(CliArgs.parse(new String[] {}));
+        assertEquals(ServerConfig.defaults(), unchanged);
     }
 
     @Test
-    void cliArgsHandleHelpFlagsAndRejectInvalidInput() {
-        CliArgs shortHelp = CliArgs.parse(new String[] {"-h"});
-        assertTrue(shortHelp.helpRequested());
-
-        CliArgs longHelp = CliArgs.parse(new String[] {"--help"});
-        assertTrue(longHelp.helpRequested());
+    void cliArgsHandleHelpBoundariesAndRejectBlankOrInvalidInput() {
+        assertTrue(CliArgs.parse(new String[] {"-h"}).helpRequested());
+        assertTrue(CliArgs.parse(new String[] {"--help"}).helpRequested());
+        assertTrue(CliArgs.usageText().contains("./scripts/run.sh"));
         assertTrue(CliArgs.usageText().contains("--ai-port"));
 
         assertNull(CliArgs.parse(new String[] {}).portOverride());
+        assertEquals(0, CliArgs.parse(new String[] {"--port", "0"}).portOverride());
+        assertEquals(65535, CliArgs.parse(new String[] {"--port", "65535"}).portOverride());
+        assertEquals(1, CliArgs.parse(new String[] {"--ai-port", "1"}).aiPortOverride());
+        assertEquals(65535, CliArgs.parse(new String[] {"--ai-port", "65535"}).aiPortOverride());
 
+        assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--config", "   "}));
+        assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--host", "   "}));
+        assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--ai-host", ""}));
         assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--port", "abc"}));
         assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--port", "-1"}));
         assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--port", "70000"}));
         assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--ai-port", "0"}));
+        assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--ai-port", "65536"}));
+        assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--config"}));
         assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--host"}));
+        assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--port"}));
+        assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--ai-host"}));
+        assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--ai-port"}));
         assertThrows(IllegalArgumentException.class, () -> CliArgs.parse(new String[] {"--unknown-flag"}));
     }
 
     @Test
-    void configLoadRejectsMissingFilesAndUnknownFields(@TempDir Path tempDir) throws IOException {
+    void validatesAllConfigRecordBoundaries() {
+        ServerConfig.TransportConfig validTransport = ServerConfig.TransportConfig.defaults();
+        ServerConfig.PublicIpLookupConfig validIp = ServerConfig.PublicIpLookupConfig.defaults();
+        ServerConfig.AiServerConfig validAi = ServerConfig.AiServerConfig.defaults();
+
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.TransportConfig(512, 8192, 60));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.TransportConfig(65536, 256, 60));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.TransportConfig(65536, 8192, 5));
+
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.PublicIpLookupConfig(true, "ftp://ip.test", 1000));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.PublicIpLookupConfig(true, "http:///nohost", 1000));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.PublicIpLookupConfig(true, "https://api.ipify.org", 99));
+
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.AiServerConfig(" ", 8080, 1000, 1000, 4));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.AiServerConfig("127.0.0.1", 0, 1000, 1000, 4));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.AiServerConfig("127.0.0.1", 65536, 1000, 1000, 4));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.AiServerConfig("127.0.0.1", 8080, 50, 1000, 4));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.AiServerConfig("127.0.0.1", 8080, 1000, 50, 4));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.AiServerConfig("127.0.0.1", 8080, 1000, 1000, 0));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig.AiServerConfig("127.0.0.1", 8080, 1000, 1000, 65));
+
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig("0.0.0.0", 3000, 10, 10, 5, 3, 50, validTransport, validIp, validAi));
+        assertThrows(IllegalArgumentException.class, () -> new ServerConfig("0.0.0.0", 3000, 0, 2, 20, 3, 50, validTransport, validIp, validAi));
+        assertThrows(NullPointerException.class, () -> new ServerConfig("0.0.0.0", 3000, 10, 2, 20, 3, 50, null, validIp, validAi));
+    }
+
+    @Test
+    void configLoadRejectsMissingMalformedAndUnknownFieldFiles(@TempDir Path tempDir) throws IOException {
         Path missing = tempDir.resolve("does-not-exist.json");
         assertThrows(IOException.class, () -> ServerConfig.load(missing));
+
+        Path malformed = tempDir.resolve("broken.json");
+        Files.writeString(malformed, "{ broken json");
+        assertThrows(IOException.class, () -> ServerConfig.load(malformed));
 
         Path typoFile = tempDir.resolve("typo.json");
         Files.writeString(typoFile, """
@@ -94,28 +146,29 @@ class ServerConfigAndCliTest {
               "port": 3000,
               "unknownKey": 123,
               "maxConcurrentMatches": 10,
+              "minUsernameLength": 2,
               "maxUsernameLength": 20,
               "repetitionLimit": 3,
               "maxMovementPlies": 50,
+              "transport": { "maxHttpRequestBytes": 65536, "maxWsMessageBytes": 8192, "wsIdleTimeoutSeconds": 300 },
               "publicIpLookup": { "enabled": false, "url": "https://api.ipify.org", "timeoutMs": 1000 },
-              "aiServer": { "host": "127.0.0.1", "port": 8080, "connectTimeoutMs": 1000, "requestTimeoutMs": 1000 }
+              "aiServer": { "host": "127.0.0.1", "port": 8080, "connectTimeoutMs": 1000, "requestTimeoutMs": 1000, "workerThreads": 4 }
             }
             """);
         assertThrows(IOException.class, () -> ServerConfig.load(typoFile));
 
-        Path badTimeout = tempDir.resolve("bad-timeout.json");
-        Files.writeString(badTimeout, """
+        Path missingSection = tempDir.resolve("missing-section.json");
+        Files.writeString(missingSection, """
             {
               "host": "0.0.0.0",
               "port": 3000,
               "maxConcurrentMatches": 10,
+              "minUsernameLength": 2,
               "maxUsernameLength": 20,
               "repetitionLimit": 3,
-              "maxMovementPlies": 50,
-              "publicIpLookup": { "enabled": false, "url": "https://api.ipify.org", "timeoutMs": 10 },
-              "aiServer": { "host": "127.0.0.1", "port": 8080, "connectTimeoutMs": 1000, "requestTimeoutMs": 1000 }
+              "maxMovementPlies": 50
             }
             """);
-        assertThrows(IOException.class, () -> ServerConfig.load(badTimeout));
+        assertThrows(IOException.class, () -> ServerConfig.load(missingSection));
     }
 }

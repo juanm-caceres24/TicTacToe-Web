@@ -193,6 +193,76 @@ class RetrogradeSolverTest {
             null,     null,     null
         };
         assertThrows(IllegalArgumentException.class, () -> solver.evaluate(impossible, Player.O));
+        assertThrows(IllegalArgumentException.class, () -> solver.evaluateStateId(-1));
+        assertThrows(IllegalArgumentException.class, () -> solver.evaluateStateId(RetrogradeSolver.STATE_SPACE));
+    }
+
+    @Test
+    void exactTablebaseStatisticsTerminalStatesLossDefenseAndEightFoldSymmetry() {
+        // Verify exact documented mathematical figures for Mobile Tic-Tac-Toe.
+        assertEquals(3_870, solver.reachableStateCount());
+        assertEquals(3_602, solver.nonTerminalStateCount());
+        assertEquals(2_161, solver.winStateCount());
+        assertEquals(936, solver.drawStateCount());
+        assertEquals(505, solver.lossStateCount());
+
+        StateEvaluation opening = solver.evaluate(new GameEngine());
+        assertEquals(StateEvaluation.Outcome.WIN, opening.outcome());
+        assertEquals(9, opening.distanceToMate());
+        assertEquals(List.of(Move.placement(4)), opening.optimalMoves());
+
+        // Terminal lost state (opponent already has 3-in-a-row) -> LOSS, DTM=0, empty optimal moves.
+        Player[] terminalLost = {
+            Player.O, Player.O, Player.O,
+            Player.X, Player.X, null,
+            null,     null,     null
+        };
+        StateEvaluation termEval = solver.evaluate(terminalLost, Player.X);
+        assertEquals(StateEvaluation.Outcome.LOSS, termEval.outcome());
+        assertEquals(0, termEval.distanceToMate());
+        assertTrue(termEval.optimalMoves().isEmpty());
+
+        // Losing state where opponent threatens immediate mate in 1: optimal defense maximizes survival DTM.
+        // Verify on every LOSS state that DTM >= 2 whenever at least one move avoids immediate mate-in-1.
+        List<RetrogradeSolver.TrainingSample> samples = solver.buildTrainingSamples(RetrogradeSolver.TargetMode.SOFT);
+        int lossChecked = 0;
+        for (RetrogradeSolver.TrainingSample sample : samples) {
+            if (sample.outcome() == StateEvaluation.Outcome.LOSS) {
+                StateEvaluation eval = solver.evaluateStateId(sample.stateId());
+                assertTrue(eval.distanceToMate() >= 2);
+                assertFalse(eval.optimalMoves().isEmpty());
+                lossChecked++;
+            }
+        }
+        assertEquals(505, lossChecked);
+
+        // 8-fold dihedral symmetry invariance (4 rotations x 2 reflections) on a sample position.
+        int[][] symmetries = {
+            {0, 1, 2, 3, 4, 5, 6, 7, 8},
+            {6, 3, 0, 7, 4, 1, 8, 5, 2},
+            {8, 7, 6, 5, 4, 3, 2, 1, 0},
+            {2, 5, 8, 1, 4, 7, 0, 3, 6},
+            {2, 1, 0, 5, 4, 3, 8, 7, 6},
+            {0, 3, 6, 1, 4, 7, 2, 5, 8},
+            {6, 7, 8, 3, 4, 5, 0, 1, 2},
+            {8, 5, 2, 7, 4, 1, 6, 3, 0}
+        };
+        Player[] baseBoard = {
+            Player.X, Player.O, null,
+            null,     Player.X, null,
+            Player.O, null,     null
+        };
+        StateEvaluation baseEval = solver.evaluate(baseBoard, Player.X);
+        for (int[] perm : symmetries) {
+            Player[] transformed = new Player[9];
+            for (int i = 0; i < 9; i++) {
+                transformed[perm[i]] = baseBoard[i];
+            }
+            StateEvaluation symEval = solver.evaluate(transformed, Player.X);
+            assertEquals(baseEval.outcome(), symEval.outcome());
+            assertEquals(baseEval.distanceToMate(), symEval.distanceToMate());
+            assertEquals(baseEval.optimalMoves().size(), symEval.optimalMoves().size());
+        }
     }
 
     private static Player[] inputToBoard(double[] input) {

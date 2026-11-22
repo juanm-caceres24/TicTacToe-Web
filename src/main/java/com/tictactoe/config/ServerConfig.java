@@ -17,15 +17,48 @@ public record ServerConfig(
     String host,
     int port,
     int maxConcurrentMatches,
+    int minUsernameLength,
     int maxUsernameLength,
     int repetitionLimit,
     int maxMovementPlies,
+    TransportConfig transport,
     PublicIpLookupConfig publicIpLookup,
     AiServerConfig aiServer
 ) {
 
     private static final ObjectMapper MAPPER = new ObjectMapper()
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
+
+    /**
+     * HTTP and WebSocket transport limits applied by Javalin/Jetty.
+     */
+    public record TransportConfig(
+        long maxHttpRequestBytes,
+        long maxWsMessageBytes,
+        int wsIdleTimeoutSeconds
+    ) {
+        public TransportConfig {
+            if (maxHttpRequestBytes < 1024L) {
+                throw new IllegalArgumentException(
+                    "transport.maxHttpRequestBytes must be >= 1024, got " + maxHttpRequestBytes
+                );
+            }
+            if (maxWsMessageBytes < 512L) {
+                throw new IllegalArgumentException(
+                    "transport.maxWsMessageBytes must be >= 512, got " + maxWsMessageBytes
+                );
+            }
+            if (wsIdleTimeoutSeconds < 10) {
+                throw new IllegalArgumentException(
+                    "transport.wsIdleTimeoutSeconds must be >= 10, got " + wsIdleTimeoutSeconds
+                );
+            }
+        }
+
+        public static TransportConfig defaults() {
+            return new TransportConfig(65_536L, 8_192L, 300);
+        }
+    }
 
     /**
      * Settings for optional external public IP detection at startup.
@@ -51,14 +84,21 @@ public record ServerConfig(
     }
 
     /**
-     * Connection settings for the external {@code NeuralNetwork} HTTP inference server.
+     * Connection and concurrency settings for the external {@code NeuralNetwork} HTTP inference server.
      */
     public record AiServerConfig(
         String host,
         int port,
         int connectTimeoutMs,
-        int requestTimeoutMs
+        int requestTimeoutMs,
+        int workerThreads
     ) {
+        public static final int DEFAULT_WORKER_THREADS = 4;
+
+        public AiServerConfig(String host, int port, int connectTimeoutMs, int requestTimeoutMs) {
+            this(host, port, connectTimeoutMs, requestTimeoutMs, DEFAULT_WORKER_THREADS);
+        }
+
         public AiServerConfig {
             if (host == null || host.isBlank()) {
                 throw new IllegalArgumentException("aiServer.host must not be blank");
@@ -76,10 +116,15 @@ public record ServerConfig(
                     "aiServer.requestTimeoutMs must be >= 100, got " + requestTimeoutMs
                 );
             }
+            if (workerThreads < 1 || workerThreads > 64) {
+                throw new IllegalArgumentException(
+                    "aiServer.workerThreads must be in [1..64], got " + workerThreads
+                );
+            }
         }
 
         public static AiServerConfig defaults() {
-            return new AiServerConfig("127.0.0.1", 8080, 2000, 3000);
+            return new AiServerConfig("127.0.0.1", 8080, 2000, 3000, DEFAULT_WORKER_THREADS);
         }
 
         public String baseUrl() {
@@ -97,8 +142,13 @@ public record ServerConfig(
         if (maxConcurrentMatches < 1) {
             throw new IllegalArgumentException("maxConcurrentMatches must be >= 1, got " + maxConcurrentMatches);
         }
-        if (maxUsernameLength < 2 || maxUsernameLength > 64) {
-            throw new IllegalArgumentException("maxUsernameLength must be in [2..64], got " + maxUsernameLength);
+        if (minUsernameLength < 1 || minUsernameLength > 64) {
+            throw new IllegalArgumentException("minUsernameLength must be in [1..64], got " + minUsernameLength);
+        }
+        if (maxUsernameLength < minUsernameLength || maxUsernameLength > 64) {
+            throw new IllegalArgumentException(
+                "maxUsernameLength must be in [" + minUsernameLength + "..64], got " + maxUsernameLength
+            );
         }
         if (repetitionLimit < 2) {
             throw new IllegalArgumentException("repetitionLimit must be >= 2, got " + repetitionLimit);
@@ -106,6 +156,7 @@ public record ServerConfig(
         if (maxMovementPlies < 1) {
             throw new IllegalArgumentException("maxMovementPlies must be >= 1, got " + maxMovementPlies);
         }
+        Objects.requireNonNull(transport, "transport configuration is required");
         Objects.requireNonNull(publicIpLookup, "publicIpLookup configuration is required");
         Objects.requireNonNull(aiServer, "aiServer configuration is required");
     }
@@ -118,9 +169,11 @@ public record ServerConfig(
             "0.0.0.0",
             3000,
             100,
+            2,
             20,
             GameEngine.DEFAULT_REPETITION_LIMIT,
             GameEngine.DEFAULT_MAX_MOVEMENT_PLIES,
+            TransportConfig.defaults(),
             PublicIpLookupConfig.defaults(),
             AiServerConfig.defaults()
         );
@@ -163,16 +216,19 @@ public record ServerConfig(
             cliArgs.aiHostOverride() != null ? cliArgs.aiHostOverride() : this.aiServer.host(),
             cliArgs.aiPortOverride() != null ? cliArgs.aiPortOverride() : this.aiServer.port(),
             this.aiServer.connectTimeoutMs(),
-            this.aiServer.requestTimeoutMs()
+            this.aiServer.requestTimeoutMs(),
+            this.aiServer.workerThreads()
         );
 
         return new ServerConfig(
             effectiveHost,
             effectivePort,
             this.maxConcurrentMatches,
+            this.minUsernameLength,
             this.maxUsernameLength,
             this.repetitionLimit,
             this.maxMovementPlies,
+            this.transport,
             effectivePublicIp,
             effectiveAi
         );
