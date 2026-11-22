@@ -82,9 +82,18 @@ fi
 echo "[test_api] Startup banner:"
 cat "${LOG_FILE}"
 
-echo "[test_api] Checking GET / ..."
+echo "[test_api] Checking GET / , /styles.css , and /app.js ..."
 ROOT_HTML="$(curl -fsS "http://127.0.0.1:${PORT}/")"
-echo "${ROOT_HTML}" | grep -q "TicTacToe-Web"
+echo "${ROOT_HTML}" | grep -q "Mobile Tic-Tac-Toe"
+curl -fsS "http://127.0.0.1:${PORT}/styles.css" | grep -q "board-wrapper"
+curl -fsS "http://127.0.0.1:${PORT}/app.js" | grep -q "JOIN_LOBBY"
+
+echo "[test_api] Checking path traversal protection ..."
+TRAVERSAL_CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/..%2Fpom.xml")"
+if [[ "${TRAVERSAL_CODE}" != "400" && "${TRAVERSAL_CODE}" != "404" ]]; then
+    echo "[test_api] Unexpected status for path traversal check: ${TRAVERSAL_CODE}" >&2
+    exit 1
+fi
 
 echo "[test_api] Checking GET /api/health ..."
 HEALTH_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/health")"
