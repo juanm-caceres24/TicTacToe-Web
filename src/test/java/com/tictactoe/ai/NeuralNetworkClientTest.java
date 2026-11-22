@@ -122,6 +122,108 @@ class NeuralNetworkClientTest {
     }
 
     @Test
+    void checkStatusHandlesCorruptHealthInfoFailuresOptionalFieldsAndInputMismatch() throws IOException {
+        HttpServer server = startMockServer();
+
+        // /health returns 200 but status != "ok"
+        server.createContext("/health", ex -> sendJson(ex, 200, "{\"status\":\"degraded\"}"));
+        assertFalse(clientFor(server, 1000).checkStatus().healthy());
+
+        // /health returns corrupt JSON
+        server.removeContext("/health");
+        server.createContext("/health", ex -> sendJson(ex, 200, "{bad"));
+        assertFalse(clientFor(server, 1000).checkStatus().healthy());
+
+        // /health OK + /info returns 500
+        server.removeContext("/health");
+        server.createContext("/health", ex -> sendJson(ex, 200, "{\"status\":\"ok\"}"));
+        server.createContext("/info", ex -> sendJson(ex, 500, "{\"error\":\"boom\"}"));
+        assertFalse(clientFor(server, 1000).checkStatus().healthy());
+
+        // /info missing input_size
+        server.removeContext("/info");
+        server.createContext("/info", ex -> sendJson(ex, 200, "{\"output_size\":41}"));
+        assertFalse(clientFor(server, 1000).checkStatus().healthy());
+
+        // /info valid 9->41 omitting optional num_layers and parameters -> defaults to -1
+        server.removeContext("/info");
+        server.createContext("/info", ex -> sendJson(ex, 200, "{\"input_size\":9,\"output_size\":41}"));
+        AiStatus minimal = clientFor(server, 1000).checkStatus();
+        assertTrue(minimal.isReady());
+        assertEquals(-1, minimal.numLayers());
+        assertEquals(-1L, minimal.parameters());
+
+        // /info incompatible input_size (10->41)
+        server.removeContext("/info");
+        server.createContext("/info", ex -> sendJson(ex, 200, "{\"input_size\":10,\"output_size\":41}"));
+        AiStatus badInput = clientFor(server, 1000).checkStatus();
+        assertFalse(badInput.isReady());
+        assertFalse(badInput.modelCompatible());
+        assertEquals(10, badInput.inputSize());
+    }
+
+    @Test
+    void predictMoveHandlesMissingLatencyNonNumericElementsPlainTextErrorsAndTerminalGame() throws Exception {
+        HttpServer server = startMockServer();
+
+        // Valid 41 scores without latency_us -> latencyUs == -1
+        double[] valid = new double[41];
+        valid[4] = 0.8;
+        String noLatency = "{\"output\":" + MAPPER.writeValueAsString(valid) + "}";
+        server.createContext("/predict", ex -> sendJson(ex, 200, noLatency));
+        AiPrediction pred = clientFor(server, 1000).predictMove(new GameEngine());
+        assertEquals(-1L, pred.latencyUs());
+        assertEquals(Move.placement(4), pred.move());
+
+        // Missing 'output' field -> INVALID_RESPONSE
+        server.removeContext("/predict");
+        server.createContext("/predict", ex -> sendJson(ex, 200, "{\"latency_us\":5}"));
+        assertEquals(
+            AiClientException.Reason.INVALID_RESPONSE,
+            assertThrows(AiClientException.class, () -> clientFor(server, 1000).predictMove(new GameEngine())).reason()
+        );
+
+        // Non-numeric element inside 'output' -> INVALID_RESPONSE
+        StringBuilder badArray = new StringBuilder("{\"output\":[\"nan\"");
+        for (int i = 1; i < 41; i++) {
+            badArray.append(",0.0");
+        }
+        badArray.append("]}");
+        String badArrayJson = badArray.toString();
+        server.removeContext("/predict");
+        server.createContext("/predict", ex -> sendJson(ex, 200, badArrayJson));
+        assertEquals(
+            AiClientException.Reason.INVALID_RESPONSE,
+            assertThrows(AiClientException.class, () -> clientFor(server, 1000).predictMove(new GameEngine())).reason()
+        );
+
+        // HTTP 500 with plain text body (non-JSON) -> HTTP_ERROR
+        server.removeContext("/predict");
+        server.createContext("/predict", ex -> {
+            byte[] b = "Internal Server Error".getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(500, b.length);
+            try (OutputStream os = ex.getResponseBody()) {
+                os.write(b);
+            }
+        });
+        AiClientException plainErr = assertThrows(
+            AiClientException.class,
+            () -> clientFor(server, 1000).predictMove(new GameEngine())
+        );
+        assertEquals(AiClientException.Reason.HTTP_ERROR, plainErr.reason());
+        assertEquals(500, plainErr.httpStatus());
+
+        // Calling predictMove on a terminated game throws IllegalStateException before hitting network.
+        GameEngine ended = new GameEngine();
+        ended.placePiece(0);
+        ended.placePiece(3);
+        ended.placePiece(1);
+        ended.placePiece(4);
+        ended.placePiece(2);
+        assertThrows(IllegalStateException.class, () -> clientFor(server, 1000).predictMove(ended));
+    }
+
+    @Test
     void predictMovePlacementPhaseSendsPlayerRelativeInputAndMasksIllegalCells() throws Exception {
         HttpServer server = startMockServer();
         AtomicReference<String> capturedBody = new AtomicReference<>();

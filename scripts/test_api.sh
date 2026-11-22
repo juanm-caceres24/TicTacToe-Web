@@ -39,11 +39,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-JAR_PATH="$(ls -1 target/tictactoe-web-*-shaded.jar 2>/dev/null | head -n 1 || true)"
+JAR_PATH="$(ls -1 target/tictactoe-web-*-shaded.jar 2>/dev/null | sort -V | tail -n 1 || true)"
 if [[ -z "${JAR_PATH}" ]]; then
     echo "[test_api] Building shaded JAR..."
     mvn -q package -DskipTests
-    JAR_PATH="$(ls -1 target/tictactoe-web-*-shaded.jar 2>/dev/null | head -n 1 || true)"
+    JAR_PATH="$(ls -1 target/tictactoe-web-*-shaded.jar 2>/dev/null | sort -V | tail -n 1 || true)"
 fi
 
 LOG_FILE="$(mktemp)"
@@ -99,6 +99,12 @@ echo "[test_api] Checking GET /api/health ..."
 HEALTH_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/health")"
 echo "  -> ${HEALTH_JSON}"
 echo "${HEALTH_JSON}" | grep -q '"status":"ok"'
+
+echo "[test_api] Checking GET /api/config ..."
+CONFIG_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/config")"
+echo "  -> ${CONFIG_JSON}"
+echo "${CONFIG_JSON}" | grep -q '"maxUsernameLength":'
+echo "${CONFIG_JSON}" | grep -q '"repetitionLimit":'
 
 echo "[test_api] Checking GET /api/ai/status ..."
 AI_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/ai/status")"

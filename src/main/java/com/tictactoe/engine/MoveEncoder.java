@@ -128,11 +128,11 @@ public final class MoveEncoder {
 
     /**
      * Applies legal move masking over a raw {@value #OUTPUT_SIZE}-element score vector and selects
-     * the legal move with the highest score.
+     * the legal move with the highest finite score.
      *
-     * <p>Resilient against {@code NaN} or infinite outputs: invalid values are never preferred over
-     * finite scores, and if all legal scores are {@code NaN} or {@code -Infinity}, deterministically
-     * falls back to the first legal move in canonical order.
+     * <p>Resilient against {@code NaN} or infinite outputs: non-finite values ({@code NaN},
+     * {@code +Infinity}, {@code -Infinity}) are never preferred over finite scores, and if all legal
+     * scores are non-finite, deterministically falls back to the first legal move in canonical order.
      */
     public static MaskedSelection selectBestLegalMove(GameEngine engine, double[] rawScores) {
         Objects.requireNonNull(engine, "engine must not be null");
@@ -160,7 +160,7 @@ public final class MoveEncoder {
         double bestScore = Double.NEGATIVE_INFINITY;
         for (int i = 0; i < legalIndices.length; i++) {
             double score = rawScores[legalIndices[i]];
-            if (Double.isNaN(score)) {
+            if (!Double.isFinite(score)) {
                 continue;
             }
             if (bestPos == -1 || score > bestScore) {
@@ -170,7 +170,7 @@ public final class MoveEncoder {
         }
 
         if (bestPos == -1) {
-            // All legal scores were NaN; fall back deterministically to the first legal move.
+            // All legal scores were non-finite; fall back deterministically to the first legal move.
             bestPos = 0;
             bestScore = rawScores[legalIndices[0]];
         }
@@ -186,7 +186,8 @@ public final class MoveEncoder {
 
     private static double[] normalizeLegalScores(int[] legalIndices, double[] rawScores) {
         double[] normalized = new double[OUTPUT_SIZE];
-        boolean allFinite = true;
+        int[] finiteIndices = new int[legalIndices.length];
+        int finiteCount = 0;
         boolean allNonNegative = true;
         double positiveSum = 0.0;
         double maxScore = Double.NEGATIVE_INFINITY;
@@ -194,9 +195,9 @@ public final class MoveEncoder {
         for (int idx : legalIndices) {
             double s = rawScores[idx];
             if (!Double.isFinite(s)) {
-                allFinite = false;
-                break;
+                continue;
             }
+            finiteIndices[finiteCount++] = idx;
             if (s < 0.0) {
                 allNonNegative = false;
             }
@@ -206,45 +207,32 @@ public final class MoveEncoder {
             }
         }
 
-        if (!allFinite) {
-            // Count positive-infinity overrides first; otherwise fall back to uniform distribution.
-            int posInfCount = 0;
+        if (finiteCount == 0) {
+            double uniform = 1.0 / legalIndices.length;
             for (int idx : legalIndices) {
-                if (rawScores[idx] == Double.POSITIVE_INFINITY) {
-                    posInfCount++;
-                }
-            }
-            if (posInfCount > 0) {
-                double share = 1.0 / posInfCount;
-                for (int idx : legalIndices) {
-                    if (rawScores[idx] == Double.POSITIVE_INFINITY) {
-                        normalized[idx] = share;
-                    }
-                }
-            } else {
-                double uniform = 1.0 / legalIndices.length;
-                for (int idx : legalIndices) {
-                    normalized[idx] = uniform;
-                }
+                normalized[idx] = uniform;
             }
             return normalized;
         }
 
         if (allNonNegative && positiveSum > 0.0) {
-            for (int idx : legalIndices) {
+            for (int i = 0; i < finiteCount; i++) {
+                int idx = finiteIndices[i];
                 normalized[idx] = rawScores[idx] / positiveSum;
             }
             return normalized;
         }
 
-        // Raw logits (contain negatives or all zeros): apply numerically stable softmax over legal actions.
+        // Raw logits (contain negatives or all zeros): apply numerically stable softmax over finite legal actions.
         double expSum = 0.0;
-        for (int idx : legalIndices) {
+        for (int i = 0; i < finiteCount; i++) {
+            int idx = finiteIndices[i];
             double e = Math.exp(rawScores[idx] - maxScore);
             normalized[idx] = e;
             expSum += e;
         }
-        for (int idx : legalIndices) {
+        for (int i = 0; i < finiteCount; i++) {
+            int idx = finiteIndices[i];
             normalized[idx] /= expSum;
         }
         return normalized;

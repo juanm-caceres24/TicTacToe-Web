@@ -57,6 +57,12 @@
         reconnectTimer: null,
         sessionId: null,
         username: null,
+        publicConfig: {
+            minUsernameLength: 2,
+            maxUsernameLength: 20,
+            repetitionLimit: 3,
+            maxMovementPlies: 50
+        },
         aiStatus: null,
         aiConfig: {
             playerSymbol: "X",
@@ -86,6 +92,9 @@
 
         loginForm: document.getElementById("login-form"),
         usernameInput: document.getElementById("username-input"),
+        usernameRange: document.getElementById("username-range"),
+        ruleRepetitionLimit: document.getElementById("rule-repetition-limit"),
+        ruleMaxPlies: document.getElementById("rule-max-plies"),
         btnJoinLobby: document.getElementById("btn-join-lobby"),
 
         lobbyUsername: document.getElementById("lobby-username"),
@@ -139,6 +148,7 @@
             el.usernameInput.value = savedName;
         }
 
+        loadPublicConfig();
         refreshAiStatus();
         connectWebSocket();
     }
@@ -179,8 +189,10 @@
         el.loginForm.addEventListener("submit", (event) => {
             event.preventDefault();
             const raw = el.usernameInput.value.trim();
-            if (raw.length < 2) {
-                showToast("Username must be at least 2 characters long.", "error");
+            const minLen = appState.publicConfig.minUsernameLength;
+            const maxLen = appState.publicConfig.maxUsernameLength;
+            if (raw.length < minLen || raw.length > maxLen) {
+                showToast(`Username must be between ${minLen} and ${maxLen} characters.`, "error");
                 return;
             }
             if (!appState.wsConnected) {
@@ -341,6 +353,39 @@
         return true;
     }
 
+    async function loadPublicConfig() {
+        try {
+            const response = await fetch("/api/config", { cache: "no-store" });
+            if (!response.ok) {
+                return;
+            }
+            const cfg = await response.json();
+            applyPublicConfig(cfg);
+        } catch {
+            // Keep default bounds when offline.
+        }
+    }
+
+    function applyPublicConfig(cfg) {
+        if (!cfg) {
+            return;
+        }
+        if (Number.isInteger(cfg.minUsernameLength) && Number.isInteger(cfg.maxUsernameLength)) {
+            appState.publicConfig.minUsernameLength = cfg.minUsernameLength;
+            appState.publicConfig.maxUsernameLength = cfg.maxUsernameLength;
+            el.usernameInput.maxLength = cfg.maxUsernameLength;
+            el.usernameRange.textContent = `${cfg.minUsernameLength}–${cfg.maxUsernameLength}`;
+        }
+        if (Number.isInteger(cfg.repetitionLimit)) {
+            appState.publicConfig.repetitionLimit = cfg.repetitionLimit;
+            el.ruleRepetitionLimit.textContent = String(cfg.repetitionLimit);
+        }
+        if (Number.isInteger(cfg.maxMovementPlies)) {
+            appState.publicConfig.maxMovementPlies = cfg.maxMovementPlies;
+            el.ruleMaxPlies.textContent = String(cfg.maxMovementPlies);
+        }
+    }
+
     async function refreshAiStatus(showFeedback = false) {
         try {
             const response = await fetch("/api/ai/status", { cache: "no-store" });
@@ -398,6 +443,7 @@
     function handleServerMessage(msg) {
         switch (msg.type) {
             case "WELCOME": {
+                const hadActiveMatch = appState.matchMeta !== null;
                 appState.sessionId = msg.sessionId;
                 appState.username = msg.username;
                 localStorage.setItem(STORAGE_USERNAME_KEY, msg.username);
@@ -405,9 +451,12 @@
                 if (msg.aiStatus) {
                     applyAiStatus(msg.aiStatus);
                 }
-                if (!appState.matchMeta) {
-                    showView("lobby");
+                if (hadActiveMatch) {
+                    // Server closed the previous match when the prior WebSocket disconnected.
+                    resetMatchState();
+                    showToast("Connection was interrupted; previous match ended. Returned to lobby.", "info");
                 }
+                showView("lobby");
                 break;
             }
 
@@ -440,7 +489,7 @@
                 appState.aiFailedOnTurn = false;
                 el.rematchHint.classList.add("hidden");
                 el.aiRetryRow.classList.add("hidden");
-                el.btnPlayAgain.disabled = false;
+                el.btnPlayAgain.disabled = msg.mode === "ONLINE_PVP";
 
                 showView("game");
                 if (msg.mode === "ONLINE_PVP") {
@@ -455,12 +504,14 @@
                 appState.aiFailedOnTurn = false;
                 el.aiRetryRow.classList.add("hidden");
 
-                if (msg.status === "IN_PROGRESS" && appState.rematchRequestedByMe) {
-                    appState.rematchRequestedByMe = false;
-                    el.rematchHint.classList.add("hidden");
-                    el.btnPlayAgain.disabled = false;
-                }
-                if (msg.status !== "IN_PROGRESS" && !appState.opponentDisconnected) {
+                const isOnline = appState.matchMeta && appState.matchMeta.mode === "ONLINE_PVP";
+                if (msg.status === "IN_PROGRESS") {
+                    if (appState.rematchRequestedByMe) {
+                        appState.rematchRequestedByMe = false;
+                        el.rematchHint.classList.add("hidden");
+                    }
+                    el.btnPlayAgain.disabled = isOnline || appState.opponentDisconnected;
+                } else if (!appState.opponentDisconnected) {
                     el.btnPlayAgain.disabled = appState.rematchRequestedByMe;
                 }
 
@@ -640,9 +691,12 @@
         if (gs.status === "DRAW") {
             el.phaseBadge.textContent = "Draw";
             el.phaseBadge.classList.add("phase-ended");
+            const repLimit = Number.isInteger(gs.repetitionLimit)
+                ? gs.repetitionLimit
+                : appState.publicConfig.repetitionLimit;
             const reasonLabel = gs.drawReason === "THREEFOLD_REPETITION"
-                ? "Threefold position repetition"
-                : "Movement ply limit reached";
+                ? `${repLimit}x repeated position`
+                : `Movement ply limit reached (${gs.maxMovementPlies})`;
             el.turnText.textContent = `Draw — ${reasonLabel}.`;
             return;
         }

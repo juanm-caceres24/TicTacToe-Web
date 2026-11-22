@@ -7,7 +7,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 find_shaded_jar() {
-    ls -1 target/tictactoe-web-*-shaded.jar 2>/dev/null | head -n 1 || true
+    ls -1 target/tictactoe-web-*-shaded.jar 2>/dev/null | sort -V | tail -n 1 || true
 }
 
 JAR_PATH="$(find_shaded_jar)"

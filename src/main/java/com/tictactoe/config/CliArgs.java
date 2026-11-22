@@ -39,7 +39,7 @@ public record CliArgs(
             switch (flag) {
                 case "-h", "--help" -> help = true;
                 case "--config" -> {
-                    String value = requireValue(args, i, flag);
+                    String value = requireNonBlankValue(args, i, flag);
                     configPath = Path.of(value);
                     i++;
                 }
@@ -74,7 +74,8 @@ public record CliArgs(
      */
     public static String usageText() {
         return """
-            Usage: java -jar tictactoe-web.jar [options]
+            Usage: ./scripts/run.sh [options]
+                   java -jar target/tictactoe-web-<version>-shaded.jar [options]
 
             Options:
               --config <path>    Path to server JSON configuration (default: configs/server.json)

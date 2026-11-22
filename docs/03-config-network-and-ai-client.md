@@ -13,9 +13,15 @@ All runtime settings live outside source code in `configs/server.json`:
   "host": "0.0.0.0",
   "port": 3000,
   "maxConcurrentMatches": 100,
+  "minUsernameLength": 2,
   "maxUsernameLength": 20,
   "repetitionLimit": 3,
   "maxMovementPlies": 50,
+  "transport": {
+    "maxHttpRequestBytes": 65536,
+    "maxWsMessageBytes": 8192,
+    "wsIdleTimeoutSeconds": 300
+  },
   "publicIpLookup": {
     "enabled": true,
     "url": "https://api.ipify.org",
@@ -25,7 +31,8 @@ All runtime settings live outside source code in `configs/server.json`:
     "host": "127.0.0.1",
     "port": 8080,
     "connectTimeoutMs": 2000,
-    "requestTimeoutMs": 3000
+    "requestTimeoutMs": 3000,
+    "workerThreads": 4
   }
 }
 ```
@@ -48,7 +55,7 @@ All runtime settings live outside source code in `configs/server.json`:
 
 `NetworkAddressResolver` inspects active Linux network interfaces and prints a consolidated startup banner via `ResolvedAddresses.formatStartupBanner(...)`:
 
-1. **Local (LAN) IP:** Active non-loopback, non-link-local IPv4 interface excluding container/virtual bridges (`lo`, `docker*`, `br-*`, `veth*`, `virbr*`, `cni*`, `flannel*`, `kube*`, `podman*`) and Tailscale interfaces, preferring `192.168.x.x` over other RFC 1918 subnets (`10.0.0.0/8`, `172.16.0.0/12`).
+1. **Local (LAN) IP:** Active non-loopback, non-link-local IPv4 interface excluding container/virtual bridges (`lo`, `docker*`, `br-*`, `veth*`, `virbr*`, `cni*`, `flannel*`, `kube*`, `podman*`, `wg-docker*`) and Tailscale interfaces, preferring `192.168.x.x` over other RFC 1918 subnets (`10.0.0.0/8`, `172.16.0.0/12`).
 2. **Tailscale IP:** Active IPv4 address in RFC 6598 CGNAT range **`100.64.0.0/10`** (`100.64.0.0` – `100.127.255.255`), prioritizing interfaces named `tailscale*` or `ts*`.
 3. **Public IP:** Optional HTTP `GET` to `publicIpLookup.url` with strict timeout (`publicIpLookup.timeoutMs`) and literal IP validation (rejects HTML error pages or timeouts gracefully, reporting `unavailable` instead of failing startup).
 

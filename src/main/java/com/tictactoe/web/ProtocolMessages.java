@@ -58,6 +58,15 @@ public final class ProtocolMessages {
     ) {
     }
 
+    public record PublicConfigResponse(
+        String version,
+        int minUsernameLength,
+        int maxUsernameLength,
+        int repetitionLimit,
+        int maxMovementPlies
+    ) {
+    }
+
     public record MoveDto(int from, int to, int actionIndex) {
         public static MoveDto from(Move move) {
             return new MoveDto(move.from(), move.to(), BoardTopology.moveToActionIndex(move));
@@ -135,6 +144,7 @@ public final class ProtocolMessages {
         MoveDto lastMove,
         String playerX,
         String playerO,
+        int repetitionLimit,
         int movementPlies,
         int maxMovementPlies,
         boolean aiThinking,
@@ -181,6 +191,7 @@ public final class ProtocolMessages {
                 last,
                 match.playerXName(),
                 match.playerOName(),
+                snap.getRepetitionLimit(),
                 snap.getMovementPlies(),
                 snap.getMaxMovementPlies(),
                 match.isAiThinking(),

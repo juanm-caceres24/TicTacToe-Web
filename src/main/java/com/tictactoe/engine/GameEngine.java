@@ -127,6 +127,18 @@ public final class GameEngine {
         if (xWin.isPresent() && oWin.isPresent()) {
             throw new IllegalArgumentException("Invalid board state: both players have winning lines");
         }
+        if (xWin.isEmpty() && oWin.isEmpty()) {
+            if (xCount > oCount && currentTurn != Player.O) {
+                throw new IllegalArgumentException(
+                    "Inconsistent turn for piece counts: X=" + xCount + ", O=" + oCount + " requires O to move"
+                );
+            }
+            if (oCount > xCount && currentTurn != Player.X) {
+                throw new IllegalArgumentException(
+                    "Inconsistent turn for piece counts: X=" + xCount + ", O=" + oCount + " requires X to move"
+                );
+            }
+        }
 
         GameEngine engine = new GameEngine(currentTurn, repetitionLimit, maxMovementPlies);
         System.arraycopy(board, 0, engine.board, 0, BoardTopology.BOARD_SIZE);

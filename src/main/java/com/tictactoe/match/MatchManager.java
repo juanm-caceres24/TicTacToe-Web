@@ -25,7 +25,6 @@ import java.util.regex.Pattern;
  */
 public final class MatchManager implements AutoCloseable {
 
-    private static final int MIN_USERNAME_LENGTH = 2;
     private static final Pattern SAFE_USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9 _.-]+$");
 
     private final ServerConfig config;
@@ -39,7 +38,7 @@ public final class MatchManager implements AutoCloseable {
         this.config = Objects.requireNonNull(config, "config must not be null");
         this.aiClient = Objects.requireNonNull(aiClient, "aiClient must not be null");
         AtomicInteger workerId = new AtomicInteger(1);
-        this.aiExecutor = Executors.newFixedThreadPool(4, runnable -> {
+        this.aiExecutor = Executors.newFixedThreadPool(config.aiServer().workerThreads(), runnable -> {
             Thread thread = new Thread(runnable, "ai-worker-" + workerId.getAndIncrement());
             thread.setDaemon(true);
             return thread;
@@ -78,7 +77,7 @@ public final class MatchManager implements AutoCloseable {
 
         String sanitized;
         try {
-            sanitized = validateUsername(rawUsername, config.maxUsernameLength());
+            sanitized = validateUsername(rawUsername, config.minUsernameLength(), config.maxUsernameLength());
         } catch (IllegalArgumentException e) {
             session.send(ProtocolMessages.ErrorMessage.of("INVALID_USERNAME", e.getMessage()));
             return;
@@ -404,16 +403,23 @@ public final class MatchManager implements AutoCloseable {
     }
 
     /**
-     * Validates and normalizes a player username (length bounds and XSS-safe character whitelist).
+     * Validates and normalizes a player username using default minimum length 2.
      */
     public static String validateUsername(String raw, int maxLength) {
+        return validateUsername(raw, 2, maxLength);
+    }
+
+    /**
+     * Validates and normalizes a player username (length bounds and XSS-safe character whitelist).
+     */
+    public static String validateUsername(String raw, int minLength, int maxLength) {
         if (raw == null) {
             throw new IllegalArgumentException("Username is required.");
         }
         String collapsed = raw.trim().replaceAll("\\s+", " ");
-        if (collapsed.length() < MIN_USERNAME_LENGTH) {
+        if (collapsed.length() < minLength) {
             throw new IllegalArgumentException(
-                "Username must be at least " + MIN_USERNAME_LENGTH + " characters long."
+                "Username must be at least " + minLength + " characters long."
             );
         }
         if (collapsed.length() > maxLength) {
@@ -467,6 +473,7 @@ public final class MatchManager implements AutoCloseable {
             } catch (RuntimeException e) {
                 match.abortAiTurn();
                 if (!match.isClosed()) {
+                    broadcastGameState(match);
                     ProtocolMessages.ErrorMessage err = ProtocolMessages.ErrorMessage.of(
                         "AI_ERROR",
                         "Unexpected AI error: " + e.getMessage()

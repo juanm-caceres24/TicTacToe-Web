@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import com.tictactoe.config.BuildInfo;
 import com.tictactoe.config.ServerConfig;
 import com.tictactoe.engine.BoardTopology;
 import com.tictactoe.engine.Move;
@@ -27,10 +28,12 @@ import java.time.Duration;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -56,14 +59,17 @@ class WebServerIntegrationTest {
     private static final class TestWsClient implements AutoCloseable {
         private final WebSocket ws;
         private final BlockingQueue<JsonNode> inbox;
+        private final CountDownLatch closedLatch;
 
-        private TestWsClient(WebSocket ws, BlockingQueue<JsonNode> inbox) {
+        private TestWsClient(WebSocket ws, BlockingQueue<JsonNode> inbox, CountDownLatch closedLatch) {
             this.ws = ws;
             this.inbox = inbox;
+            this.closedLatch = closedLatch;
         }
 
         static TestWsClient connect(int port) throws Exception {
             BlockingQueue<JsonNode> queue = new LinkedBlockingQueue<>();
+            CountDownLatch closed = new CountDownLatch(1);
             StringBuilder buffer = new StringBuilder();
 
             HttpClient client = HttpClient.newHttpClient();
@@ -85,14 +91,29 @@ class WebServerIntegrationTest {
                         webSocket.request(1);
                         return CompletableFuture.completedFuture(null);
                     }
+
+                    @Override
+                    public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+                        closed.countDown();
+                        return CompletableFuture.completedFuture(null);
+                    }
+
+                    @Override
+                    public void onError(WebSocket webSocket, Throwable error) {
+                        closed.countDown();
+                    }
                 })
                 .get(5, TimeUnit.SECONDS);
 
-            return new TestWsClient(ws, queue);
+            return new TestWsClient(ws, queue, closed);
         }
 
         void send(String json) throws Exception {
             ws.sendText(json, true).get(5, TimeUnit.SECONDS);
+        }
+
+        boolean awaitClosed(long timeoutMs) throws InterruptedException {
+            return closedLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
         }
 
         JsonNode awaitMessage(String expectedType) throws Exception {
@@ -130,21 +151,31 @@ class WebServerIntegrationTest {
     }
 
     private int startServerWithAiPort(int aiPort) {
+        return startServer(aiPort, ServerConfig.TransportConfig.defaults());
+    }
+
+    private int startServer(int aiPort, ServerConfig.TransportConfig transport) {
         ServerConfig cfg = new ServerConfig(
             "127.0.0.1",
             0,
             20,
+            2,
             20,
             3,
             50,
+            transport,
             new ServerConfig.PublicIpLookupConfig(false, "https://api.ipify.org", 1000),
-            new ServerConfig.AiServerConfig("127.0.0.1", aiPort, 1000, 1500)
+            new ServerConfig.AiServerConfig("127.0.0.1", aiPort, 1000, 1500, 4)
         );
         webServer = new WebServer(cfg);
         return webServer.start();
     }
 
-    private int startMockAiServer(AtomicBoolean healthyFlag) throws IOException {
+    private int startMockAiServer(
+        AtomicBoolean healthyFlag,
+        AtomicInteger outputSizeFlag,
+        AtomicBoolean failPredictFlag
+    ) throws IOException {
         mockAiServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         mockAiServer.setExecutor(Executors.newCachedThreadPool());
 
@@ -158,10 +189,13 @@ class WebServerIntegrationTest {
         mockAiServer.createContext("/info", ex -> sendJson(
             ex,
             200,
-            "{\"input_size\":9,\"output_size\":41,\"num_layers\":3,\"parameters\":23081}"
+            "{\"input_size\":9,\"output_size\":" + outputSizeFlag.get() + ",\"num_layers\":3,\"parameters\":23081}"
         ));
         mockAiServer.createContext("/predict", ex -> {
-            // Assign descending preference preferring center (4) in placement and legal slides in movement.
+            if (failPredictFlag.get()) {
+                sendJson(ex, 500, "{\"error\":\"temporary ai failure\"}");
+                return;
+            }
             double[] scores = new double[41];
             scores[4] = 0.85;
             scores[0] = 0.70;
@@ -188,9 +222,10 @@ class WebServerIntegrationTest {
     }
 
     @Test
-    void restEndpointsServeRootHtmlHealthAndLiveAiStatus() throws Exception {
+    void restEndpointsServeStaticAssetsPathTraversalHealthConfigAndAiStatus() throws Exception {
         AtomicBoolean aiUp = new AtomicBoolean(true);
-        int aiPort = startMockAiServer(aiUp);
+        AtomicInteger aiOutputs = new AtomicInteger(41);
+        int aiPort = startMockAiServer(aiUp, aiOutputs, new AtomicBoolean(false));
         int port = startServerWithAiPort(aiPort);
 
         HttpClient http = HttpClient.newHttpClient();
@@ -223,6 +258,7 @@ class WebServerIntegrationTest {
         );
         assertTrue(traversal.statusCode() == 400 || traversal.statusCode() == 404);
 
+        // /api/health returns build version and live metrics.
         HttpResponse<String> health = http.send(
             HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/health")).GET().build(),
             HttpResponse.BodyHandlers.ofString()
@@ -230,8 +266,23 @@ class WebServerIntegrationTest {
         assertEquals(200, health.statusCode());
         JsonNode healthJson = MAPPER.readTree(health.body());
         assertEquals("ok", healthJson.get("status").asText());
+        assertEquals(BuildInfo.version(), healthJson.get("version").asText());
         assertEquals(0, healthJson.get("activeMatches").asInt());
 
+        // /api/config exposes public gameplay bounds synchronized with ServerConfig.
+        HttpResponse<String> cfgResp = http.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/config")).GET().build(),
+            HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(200, cfgResp.statusCode());
+        JsonNode cfgJson = MAPPER.readTree(cfgResp.body());
+        assertEquals(BuildInfo.version(), cfgJson.get("version").asText());
+        assertEquals(2, cfgJson.get("minUsernameLength").asInt());
+        assertEquals(20, cfgJson.get("maxUsernameLength").asInt());
+        assertEquals(3, cfgJson.get("repetitionLimit").asInt());
+        assertEquals(50, cfgJson.get("maxMovementPlies").asInt());
+
+        // /api/ai/status: online -> incompatible (9->9) -> offline.
         HttpResponse<String> aiOnline = http.send(
             HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/ai/status")).GET().build(),
             HttpResponse.BodyHandlers.ofString()
@@ -242,7 +293,16 @@ class WebServerIntegrationTest {
         assertEquals(9, onlineJson.get("inputSize").asInt());
         assertEquals(41, onlineJson.get("outputSize").asInt());
 
-        // Toggle mock AI down -> /api/ai/status reports available=false without 500 error.
+        aiOutputs.set(9);
+        HttpResponse<String> aiIncompat = http.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/ai/status")).GET().build(),
+            HttpResponse.BodyHandlers.ofString()
+        );
+        JsonNode incompatJson = MAPPER.readTree(aiIncompat.body());
+        assertFalse(incompatJson.get("available").asBoolean());
+        assertTrue(incompatJson.get("healthy").asBoolean());
+        assertFalse(incompatJson.get("compatible").asBoolean());
+
         aiUp.set(false);
         HttpResponse<String> aiDown = http.send(
             HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/ai/status")).GET().build(),
@@ -253,67 +313,167 @@ class WebServerIntegrationTest {
     }
 
     @Test
-    void endToEndOnlinePvpMatchOverRealWebSockets() throws Exception {
-        int closedAiPort = findClosedPort();
-        int port = startServerWithAiPort(closedAiPort);
+    void webSocketValidatesMalformedPayloadsAndRejectsOversizedFrames() throws Exception {
+        int port = startServer(findClosedPort(), new ServerConfig.TransportConfig(65_536L, 1_024L, 60));
 
-        try (TestWsClient alice = TestWsClient.connect(port);
-             TestWsClient bob = TestWsClient.connect(port)) {
+        try (TestWsClient client = TestWsClient.connect(port)) {
+            client.send("{broken json");
+            assertEquals("BAD_REQUEST", client.awaitMessage("ERROR").get("code").asText());
 
-            // Invalid JSON returns clean ERROR without disconnecting.
-            alice.send("{broken json");
-            JsonNode badJsonErr = alice.awaitMessage("ERROR");
-            assertEquals("BAD_REQUEST", badJsonErr.get("code").asText());
+            client.send("[1, 2, 3]");
+            assertEquals("BAD_REQUEST", client.awaitMessage("ERROR").get("code").asText());
 
-            alice.send("{\"type\":\"JOIN_LOBBY\",\"username\":\"Alice\"}");
-            bob.send("{\"type\":\"JOIN_LOBBY\",\"username\":\"Bob\"}");
-            assertEquals("Alice", alice.awaitMessage("WELCOME").get("username").asText());
-            assertEquals("Bob", bob.awaitMessage("WELCOME").get("username").asText());
+            client.send("{\"foo\":\"bar\"}");
+            assertEquals("BAD_REQUEST", client.awaitMessage("ERROR").get("code").asText());
 
-            alice.send("{\"type\":\"QUEUE_ONLINE\"}");
-            assertEquals(1, alice.awaitMessage("QUEUE_JOINED").get("position").asInt());
+            client.send("{\"type\":\"DOES_NOT_EXIST\"}");
+            assertEquals("UNKNOWN_MESSAGE_TYPE", client.awaitMessage("ERROR").get("code").asText());
 
-            bob.send("{\"type\":\"QUEUE_ONLINE\"}");
-            JsonNode aliceMatch = alice.awaitMessage("MATCH_FOUND");
-            JsonNode bobMatch = bob.awaitMessage("MATCH_FOUND");
-            assertEquals("X", aliceMatch.get("yourSymbol").asText());
-            assertEquals("O", bobMatch.get("yourSymbol").asText());
+            client.send("{\"type\":\"JOIN_LOBBY\",\"username\":12345}");
+            assertEquals("INVALID_USERNAME", client.awaitMessage("ERROR").get("code").asText());
 
-            JsonNode initialState = alice.awaitMessage("GAME_STATE");
-            assertEquals("PLACEMENT", initialState.get("phase").asText());
-            assertEquals(9, initialState.get("legalMoves").size());
-            bob.awaitMessage("GAME_STATE");
+            client.send("{\"type\":\"JOIN_LOBBY\",\"username\":\"ValidUser\"}");
+            assertEquals("ValidUser", client.awaitMessage("WELCOME").get("username").asText());
 
-            // Play a complete win for Alice (X: 0, 4, 8; O: 1, 2).
-            alice.send("{\"type\":\"PLACE_PIECE\",\"to\":0}");
-            alice.awaitMessage("GAME_STATE");
-            bob.awaitMessage("GAME_STATE");
+            client.send("{\"type\":\"START_AI_GAME\",\"playerSymbol\":\"Z\"}");
+            assertEquals("BAD_REQUEST", client.awaitMessage("ERROR").get("code").asText());
 
-            bob.send("{\"type\":\"PLACE_PIECE\",\"to\":1}");
-            alice.awaitMessage("GAME_STATE");
-            bob.awaitMessage("GAME_STATE");
+            client.send("{\"type\":\"START_AI_GAME\",\"firstTurn\":\"NOBODY\"}");
+            assertEquals("BAD_REQUEST", client.awaitMessage("ERROR").get("code").asText());
 
-            alice.send("{\"type\":\"PLACE_PIECE\",\"to\":4}");
-            alice.awaitMessage("GAME_STATE");
-            bob.awaitMessage("GAME_STATE");
+            // Default START_AI_GAME with omitted fields reaches MatchManager and reports AI_UNAVAILABLE.
+            client.send("{\"type\":\"START_AI_GAME\"}");
+            assertEquals("AI_UNAVAILABLE", client.awaitMessage("ERROR").get("code").asText());
 
-            bob.send("{\"type\":\"PLACE_PIECE\",\"to\":2}");
-            alice.awaitMessage("GAME_STATE");
-            bob.awaitMessage("GAME_STATE");
+            client.send("{\"type\":\"PLACE_PIECE\",\"to\":\"four\"}");
+            assertEquals("BAD_REQUEST", client.awaitMessage("ERROR").get("code").asText());
 
-            alice.send("{\"type\":\"PLACE_PIECE\",\"to\":8}");
-            JsonNode finalAlice = alice.awaitMessage("GAME_STATE");
-            JsonNode finalBob = bob.awaitMessage("GAME_STATE");
-            assertEquals("X_WINS", finalAlice.get("status").asText());
-            assertEquals("X_WINS", finalBob.get("status").asText());
-            assertEquals(3, finalAlice.get("winningLine").size());
+            client.send("{\"type\":\"PLACE_PIECE\",\"to\":9}");
+            assertEquals("ILLEGAL_MOVE", client.awaitMessage("ERROR").get("code").asText());
+
+            client.send("{\"type\":\"MOVE_PIECE\",\"from\":0,\"to\":0}");
+            assertEquals("ILLEGAL_MOVE", client.awaitMessage("ERROR").get("code").asText());
+
+            client.send("{\"type\":\"MOVE_PIECE\",\"from\":\"a\",\"to\":4}");
+            assertEquals("BAD_REQUEST", client.awaitMessage("ERROR").get("code").asText());
+
+            // Oversized frame (> 1,024 bytes) causes Jetty to close the socket with message-too-big.
+            String oversized = "{\"type\":\"JOIN_LOBBY\",\"username\":\"" + "A".repeat(2_048) + "\"}";
+            client.send(oversized);
+            assertTrue(client.awaitClosed(3000), "Expected server to close socket on oversized WebSocket frame");
         }
     }
 
     @Test
-    void endToEndVsAiMatchHandlesAiFirstAndHumanFirstAndOfflineGracefully() throws Exception {
+    void endToEndOnlinePvpMovementPhaseHealthCountersRematchAndAbruptDisconnect() throws Exception {
+        int port = startServerWithAiPort(findClosedPort());
+        HttpClient http = HttpClient.newHttpClient();
+
+        try (TestWsClient alice = TestWsClient.connect(port)) {
+            alice.send("{\"type\":\"JOIN_LOBBY\",\"username\":\"Alice\"}");
+            alice.awaitMessage("WELCOME");
+
+            try (TestWsClient bob = TestWsClient.connect(port)) {
+                bob.send("{\"type\":\"JOIN_LOBBY\",\"username\":\"Bob\"}");
+                bob.awaitMessage("WELCOME");
+
+                // Queue, verify live /api/health queueSize=1, cancel, then re-queue.
+                alice.send("{\"type\":\"QUEUE_ONLINE\"}");
+                assertEquals(1, alice.awaitMessage("QUEUE_JOINED").get("position").asInt());
+
+                JsonNode queuedHealth = MAPPER.readTree(http.send(
+                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/health")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString()
+                ).body());
+                assertEquals(2, queuedHealth.get("connectedSessions").asInt());
+                assertEquals(1, queuedHealth.get("queueSize").asInt());
+                assertEquals(0, queuedHealth.get("activeMatches").asInt());
+
+                alice.send("{\"type\":\"CANCEL_QUEUE\"}");
+                alice.awaitMessage("QUEUE_CANCELLED");
+
+                alice.send("{\"type\":\"QUEUE_ONLINE\"}");
+                alice.awaitMessage("QUEUE_JOINED");
+                bob.send("{\"type\":\"QUEUE_ONLINE\"}");
+                alice.awaitMessage("MATCH_FOUND");
+                bob.awaitMessage("MATCH_FOUND");
+                alice.awaitMessage("GAME_STATE");
+                bob.awaitMessage("GAME_STATE");
+
+                JsonNode matchHealth = MAPPER.readTree(http.send(
+                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/health")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString()
+                ).body());
+                assertEquals(0, matchHealth.get("queueSize").asInt());
+                assertEquals(1, matchHealth.get("activeMatches").asInt());
+
+                // Play 6 placements into Phase 2 (X={0,4,7}, O={1,2,6}), then X wins via MOVE_PIECE(7->8).
+                int[][] placements = {{0, 1}, {4, 2}, {7, 6}};
+                for (int[] pair : placements) {
+                    alice.send("{\"type\":\"PLACE_PIECE\",\"to\":" + pair[0] + "}");
+                    alice.awaitMessage("GAME_STATE");
+                    bob.awaitMessage("GAME_STATE");
+                    bob.send("{\"type\":\"PLACE_PIECE\",\"to\":" + pair[1] + "}");
+                    alice.awaitMessage("GAME_STATE");
+                    bob.awaitMessage("GAME_STATE");
+                }
+
+                alice.send("{\"type\":\"MOVE_PIECE\",\"from\":7,\"to\":8}");
+                JsonNode winAlice = alice.awaitMessage("GAME_STATE");
+                JsonNode winBob = bob.awaitMessage("GAME_STATE");
+                assertEquals("X_WINS", winAlice.get("status").asText());
+                assertEquals("X_WINS", winBob.get("status").asText());
+                assertEquals(1, winAlice.get("movementPlies").asInt());
+
+                // Mutual rematch over real WebSockets.
+                alice.send("{\"type\":\"PLAY_AGAIN\"}");
+                assertEquals("Alice", bob.awaitMessage("REMATCH_REQUESTED").get("byUsername").asText());
+                bob.send("{\"type\":\"PLAY_AGAIN\"}");
+                JsonNode restarted = alice.awaitMessage("GAME_STATE");
+                bob.awaitMessage("GAME_STATE");
+                assertEquals("IN_PROGRESS", restarted.get("status").asText());
+                assertEquals("O", restarted.get("currentTurn").asText());
+            }
+
+            // Exiting Bob's try-with-resources closes his WebSocket -> Alice receives OPPONENT_LEFT.
+            JsonNode left = alice.awaitMessage("OPPONENT_LEFT");
+            assertTrue(left.get("message").asText().contains("Bob"));
+        }
+    }
+
+    @Test
+    void endToEndLocalPvpThroughMovementPhaseAndLeave() throws Exception {
+        int port = startServerWithAiPort(findClosedPort());
+
+        try (TestWsClient client = TestWsClient.connect(port)) {
+            client.send("{\"type\":\"JOIN_LOBBY\",\"username\":\"LocalHost\"}");
+            client.awaitMessage("WELCOME");
+
+            client.send("{\"type\":\"START_LOCAL_GAME\"}");
+            assertEquals("LOCAL_PVP", client.awaitMessage("MATCH_FOUND").get("mode").asText());
+            client.awaitMessage("GAME_STATE");
+
+            int[] placements = {0, 1, 4, 2, 7, 6};
+            for (int cell : placements) {
+                client.send("{\"type\":\"PLACE_PIECE\",\"to\":" + cell + "}");
+                client.awaitMessage("GAME_STATE");
+            }
+
+            client.send("{\"type\":\"MOVE_PIECE\",\"from\":7,\"to\":8}");
+            JsonNode win = client.awaitMessage("GAME_STATE");
+            assertEquals("X_WINS", win.get("status").asText());
+
+            client.send("{\"type\":\"LEAVE_MATCH\"}");
+            client.awaitMessage("MATCH_LEFT");
+        }
+    }
+
+    @Test
+    void endToEndVsAiHandlesOfflineOnlineTransientErrorRetryAndMovementPhase() throws Exception {
         AtomicBoolean aiUp = new AtomicBoolean(false);
-        int aiPort = startMockAiServer(aiUp);
+        AtomicInteger aiOutputs = new AtomicInteger(41);
+        AtomicBoolean failPredict = new AtomicBoolean(false);
+        int aiPort = startMockAiServer(aiUp, aiOutputs, failPredict);
         int port = startServerWithAiPort(aiPort);
 
         try (TestWsClient client = TestWsClient.connect(port)) {
@@ -321,36 +481,49 @@ class WebServerIntegrationTest {
             JsonNode welcome = client.awaitMessage("WELCOME");
             assertFalse(welcome.get("aiStatus").get("available").asBoolean());
 
-            // Starting vs AI while AI server is down returns clean AI_UNAVAILABLE error.
+            // Offline AI returns clean AI_UNAVAILABLE error.
             client.send("{\"type\":\"START_AI_GAME\",\"playerSymbol\":\"X\",\"firstTurn\":\"HUMAN\"}");
-            JsonNode offlineErr = client.awaitMessage("ERROR");
-            assertEquals("AI_UNAVAILABLE", offlineErr.get("code").asText());
+            assertEquals("AI_UNAVAILABLE", client.awaitMessage("ERROR").get("code").asText());
 
-            // Bring AI server online and start a game where AI moves first as O.
+            // Bring AI online; AI moves first as O (places center 4).
             aiUp.set(true);
             client.send("{\"type\":\"START_AI_GAME\",\"playerSymbol\":\"X\",\"firstTurn\":\"AI\"}");
-            JsonNode found = client.awaitMessage("MATCH_FOUND");
-            assertEquals("VS_AI", found.get("mode").asText());
-            assertEquals("X", found.get("yourSymbol").asText());
+            assertEquals("VS_AI", client.awaitMessage("MATCH_FOUND").get("mode").asText());
 
-            // Wait for AI's opening move to complete (center cell 4 preferred by mock).
-            JsonNode afterAiOpening = client.awaitGameStateWhere(
-                state -> !state.get("aiThinking").asBoolean() && "X".equals(state.get("currentTurn").asText())
+            JsonNode afterAi1 = client.awaitGameStateWhere(
+                s -> !s.get("aiThinking").asBoolean() && "X".equals(s.get("currentTurn").asText())
             );
-            assertEquals("O", afterAiOpening.get("board").get(4).asText());
-            assertNotNull(afterAiOpening.get("aiMeta"));
-            assertEquals(19L, afterAiOpening.get("aiMeta").get("latencyUs").asLong());
-            assertEquals(41, afterAiOpening.get("aiMeta").get("actionProbs").size());
+            assertEquals("O", afterAi1.get("board").get(4).asText());
+            assertNotNull(afterAi1.get("aiMeta"));
+            assertEquals(19L, afterAi1.get("aiMeta").get("latencyUs").asLong());
+            assertEquals(41, afterAi1.get("aiMeta").get("actionProbs").size());
 
-            // Human responds on cell 0 -> AI automatically plays its second move.
+            // Human plays 0 while AI fails transiently -> AI_ERROR -> RETRY_AI_MOVE recovers (O plays 2).
+            failPredict.set(true);
             client.send("{\"type\":\"PLACE_PIECE\",\"to\":0}");
-            JsonNode afterAiReply = client.awaitGameStateWhere(
-                state -> !state.get("aiThinking").asBoolean()
-                    && state.get("piecesPlaced").get("O").asInt() == 2
+            assertEquals("AI_ERROR", client.awaitMessage("ERROR").get("code").asText());
+
+            failPredict.set(false);
+            client.send("{\"type\":\"RETRY_AI_MOVE\"}");
+            JsonNode afterRetry = client.awaitGameStateWhere(
+                s -> !s.get("aiThinking").asBoolean() && s.get("piecesPlaced").get("O").asInt() == 2
             );
-            assertEquals("X", afterAiReply.get("currentTurn").asText());
-            assertEquals("X", afterAiReply.get("board").get(0).asText());
-            assertEquals("O", afterAiReply.get("board").get(2).asText());
+            assertEquals("O", afterRetry.get("board").get(2).asText());
+
+            // Human blocks diagonal on 6 -> AI places 8 (O={2,4,8}, no win); human places 5 (X={0,5,6}, no win).
+            // Both now have 3 pieces -> Phase 2 (MOVEMENT): AI slides 4->1 (highest legal movement score 0.90).
+            client.send("{\"type\":\"PLACE_PIECE\",\"to\":6}");
+            client.awaitGameStateWhere(
+                s -> !s.get("aiThinking").asBoolean() && s.get("piecesPlaced").get("O").asInt() == 3
+            );
+            client.send("{\"type\":\"PLACE_PIECE\",\"to\":5}");
+            JsonNode movementReply = client.awaitGameStateWhere(
+                s -> !s.get("aiThinking").asBoolean()
+                    && "MOVEMENT".equals(s.get("phase").asText())
+                    && s.get("movementPlies").asInt() == 1
+            );
+            assertEquals(4, movementReply.get("lastMove").get("from").asInt());
+            assertEquals(1, movementReply.get("lastMove").get("to").asInt());
         }
     }
 

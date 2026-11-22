@@ -226,6 +226,93 @@ class GameEngineTest {
             null,     null,     null
         };
         assertThrows(IllegalArgumentException.class, () -> GameEngine.fromState(bothWinning, Player.X));
+
+        // Invalid fromState: piece count difference > 1
+        Player[] unbalanced = {
+            Player.X, Player.X, null,
+            null,     null,     null,
+            null,     null,     null
+        };
+        assertThrows(IllegalArgumentException.class, () -> GameEngine.fromState(unbalanced, Player.O));
+
+        // Invalid fromState: inconsistent turn for piece counts (X has 2, O has 1 -> must be O's turn)
+        Player[] wrongTurnX = {
+            Player.X, Player.X, null,
+            Player.O, null,     null,
+            null,     null,     null
+        };
+        assertThrows(IllegalArgumentException.class, () -> GameEngine.fromState(wrongTurnX, Player.X));
+
+        Player[] wrongTurnO = {
+            Player.O, Player.O, null,
+            Player.X, null,     null,
+            null,     null,     null
+        };
+        assertThrows(IllegalArgumentException.class, () -> GameEngine.fromState(wrongTurnO, Player.O));
+
+        // Out-of-bounds cell lookup
+        assertThrows(IllegalArgumentException.class, () -> engine.getCell(-1));
+        assertThrows(IllegalArgumentException.class, () -> engine.getCell(9));
+    }
+
+    @Test
+    void playerSymbolParsingMoveValidationAndOWinsInBothPhases() {
+        assertEquals(Player.X, Player.fromSymbol('x'));
+        assertEquals(Player.O, Player.fromSymbol("  o "));
+        assertThrows(IllegalArgumentException.class, () -> Player.fromSymbol('Z'));
+        assertThrows(IllegalArgumentException.class, () -> Player.fromSymbol((String) null));
+        assertThrows(IllegalArgumentException.class, () -> Player.fromSymbol(""));
+        assertThrows(IllegalArgumentException.class, () -> Player.fromSymbol("XO"));
+
+        assertEquals("PLACE(4)", Move.placement(4).toString());
+        assertEquals("MOVE(0->4)", Move.movement(0, 4).toString());
+        assertThrows(IllegalArgumentException.class, () -> Move.placement(-1));
+        assertThrows(IllegalArgumentException.class, () -> Move.placement(9));
+        assertThrows(IllegalArgumentException.class, () -> Move.movement(0, 0));
+        assertThrows(IllegalArgumentException.class, () -> Move.movement(9, 4));
+
+        // Game starting with O -> O wins on ply 5 (column {0, 3, 6}).
+        GameEngine oStarts = new GameEngine(Player.O);
+        oStarts.placePiece(0); // O
+        oStarts.placePiece(1); // X
+        oStarts.placePiece(3); // O
+        oStarts.placePiece(2); // X
+        oStarts.placePiece(6); // O wins
+        assertEquals(GameStatus.O_WINS, oStarts.getStatus());
+        assertEquals(Player.O, oStarts.getWinner().orElseThrow());
+        assertArrayEquals(new int[] {0, 3, 6}, oStarts.getWinningLine().orElseThrow());
+
+        // O wins in movement phase + fromState recognizes pre-won board.
+        Player[] preWonO = {
+            Player.O, Player.O, Player.O,
+            Player.X, Player.X, null,
+            null,     null,     null
+        };
+        GameEngine terminal = GameEngine.fromState(preWonO, Player.X);
+        assertEquals(GameStatus.O_WINS, terminal.getStatus());
+        assertTrue(terminal.getLegalMoves().isEmpty());
+
+        // Copy isolates repetition history and encodePositionKey distinguishes side to move.
+        Player[] mid = {
+            Player.X, null,     Player.O,
+            null,     Player.X, null,
+            Player.O, Player.X, Player.O
+        };
+        GameEngine e1 = GameEngine.fromState(mid, Player.X, 2, 50);
+        GameEngine e2 = GameEngine.fromState(mid, Player.O, 2, 50);
+        assertFalse(e1.encodePositionKey().equals(e2.encodePositionKey()));
+
+        GameEngine cloned = e1.copy();
+        cloned.movePiece(0, 3);
+        cloned.movePiece(2, 5);
+        cloned.movePiece(3, 0);
+        cloned.movePiece(5, 2); // repetitionLimit=2 -> DRAW on clone only
+        assertEquals(GameStatus.DRAW, cloned.getStatus());
+        assertEquals(GameStatus.IN_PROGRESS, e1.getStatus());
+
+        cloned.reset();
+        assertEquals(GameStatus.IN_PROGRESS, cloned.getStatus());
+        assertEquals(DrawReason.NONE, cloned.getDrawReason());
     }
 
     @Test

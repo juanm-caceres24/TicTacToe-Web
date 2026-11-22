@@ -25,7 +25,7 @@ All commits follow **Conventional Commits** in English:
 <type>(<scope>): <imperative summary>
 ```
 
-Allowed types: `feat`, `fix`, `test`, `docs`, `build`, `perf`, `refactor`.
+Allowed types: `feat`, `fix`, `test`, `docs`, `build`, `perf`, `refactor`, `chore` (releases/maintenance), and `merge` (non-fast-forward branch integration commits).
 
 Examples:
 - `build(setup): initialize maven project structure, scripts, and core docs`
