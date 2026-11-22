@@ -7,6 +7,7 @@ import com.tictactoe.engine.Move;
 import com.tictactoe.engine.Player;
 import com.tictactoe.match.MatchManager;
 import com.tictactoe.match.SessionSender;
+import com.tictactoe.net.NetworkAddressResolver;
 import io.javalin.Javalin;
 import io.javalin.websocket.WsContext;
 import java.net.InetSocketAddress;
@@ -56,20 +57,20 @@ public final class GameWebSocketHandler {
                 if (err != null) {
                     LOG.debug("WebSocket error on session {}: {}", ctx.sessionId(), err.getMessage());
                 }
-                senders.remove(ctx.sessionId());
-                matchManager.unregisterSession(ctx.sessionId(), null);
+                // Defer unregisterSession to onClose so Jetty's real RFC 6455 closeStatus (e.g. 1009) is preserved.
             });
         });
     }
 
     /**
      * Extracts the client IP from the TCP socket address, optionally honoring the leftmost
-     * {@code X-Forwarded-For} entry when {@code trustProxyHeaders} is enabled.
+     * {@code X-Forwarded-For} entry when {@code trustProxyHeaders} is enabled and the value
+     * is a valid IPv4/IPv6 literal.
      */
     static String resolveClientIp(String socketIp, String forwardedForHeader, boolean trustProxyHeaders) {
         if (trustProxyHeaders && forwardedForHeader != null && !forwardedForHeader.isBlank()) {
             String first = forwardedForHeader.split(",", 2)[0].trim();
-            if (!first.isEmpty()) {
+            if (NetworkAddressResolver.isValidIpLiteral(first)) {
                 return first;
             }
         }

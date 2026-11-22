@@ -14,7 +14,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -134,5 +140,77 @@ class AuditLoggerTest {
             logger.logWsConnect("s-1", "127.0.0.1");
         }
         assertFalse(Files.exists(unused));
+    }
+
+    @Test
+    void rotationWithZeroBackupsRecreatesActiveFileWithoutCreatingBackupFiles(@TempDir Path tempDir)
+        throws IOException {
+        Path logFile = tempDir.resolve("audit.log");
+        try (AuditLogger logger = AuditLogger.open(logFile, 140L, 0)) {
+            logger.logWsConnect("first", "10.0.0.1");
+            logger.logWsConnect("second", "10.0.0.2");
+            logger.logWsConnect("third", "10.0.0.3");
+        }
+
+        assertTrue(Files.isRegularFile(logFile));
+        assertFalse(Files.exists(tempDir.resolve("audit.log.0")));
+        assertFalse(Files.exists(tempDir.resolve("audit.log.1")));
+        List<String> lines = Files.readAllLines(logFile, StandardCharsets.UTF_8);
+        assertEquals(1, lines.size());
+        assertEquals("third", MAPPER.readTree(lines.get(0)).get("sessionId").asText());
+    }
+
+    @Test
+    void concurrentMultiThreadedWritesAndRotationsProduceOnlyValidJsonLines(@TempDir Path tempDir)
+        throws Exception {
+        Path logFile = tempDir.resolve("audit.log");
+        int threads = 6;
+        int writesPerThread = 25;
+
+        try (AuditLogger logger = AuditLogger.open(logFile, 600L, 4)) {
+            ExecutorService pool = Executors.newFixedThreadPool(threads);
+            CountDownLatch gate = new CountDownLatch(1);
+            List<Future<?>> futures = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                final int tid = t;
+                futures.add(pool.submit(() -> {
+                    try {
+                        gate.await();
+                        for (int i = 0; i < writesPerThread; i++) {
+                            logger.logWsConnect("t" + tid + "-" + i, "10.0." + tid + "." + i);
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }));
+            }
+            gate.countDown();
+            for (Future<?> f : futures) {
+                f.get(5, TimeUnit.SECONDS);
+            }
+            pool.shutdownNow();
+        }
+
+        int totalValidLines = 0;
+        List<Path> candidates = List.of(
+            logFile,
+            tempDir.resolve("audit.log.1"),
+            tempDir.resolve("audit.log.2"),
+            tempDir.resolve("audit.log.3"),
+            tempDir.resolve("audit.log.4")
+        );
+        for (Path p : candidates) {
+            if (!Files.isRegularFile(p)) {
+                continue;
+            }
+            for (String line : Files.readAllLines(p, StandardCharsets.UTF_8)) {
+                JsonNode node = MAPPER.readTree(line);
+                assertEquals("WS_CONNECT", node.get("event").asText());
+                OffsetDateTime.parse(node.get("ts").asText());
+                totalValidLines++;
+            }
+        }
+        assertFalse(Files.exists(tempDir.resolve("audit.log.5")));
+        assertTrue(totalValidLines > 0);
     }
 }

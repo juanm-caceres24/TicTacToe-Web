@@ -6,6 +6,7 @@ import com.tictactoe.config.ServerConfig;
 import com.tictactoe.match.MatchManager;
 import io.javalin.Javalin;
 import io.javalin.http.staticfiles.Location;
+import jakarta.servlet.DispatcherType;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Objects;
@@ -15,8 +16,6 @@ import java.util.Objects;
  * and file-backed JSONL audit logging on a single port.
  */
 public final class WebServer implements AutoCloseable {
-
-    private static final String REQ_START_NANOS_ATTR = "ttt.reqStartNanos";
 
     private final ServerConfig config;
     private final AuditLogger auditLogger;
@@ -66,24 +65,28 @@ public final class WebServer implements AutoCloseable {
                 factory.setIdleTimeout(Duration.ofSeconds(transport.wsIdleTimeoutSeconds()));
                 factory.setMaxTextMessageSize(transport.maxWsMessageBytes());
             });
+            if (logging.enabled() && logging.logHttpRequests()) {
+                boolean trustProxy = logging.trustProxyHeaders();
+                cfg.requestLogger.http((ctx, executionTimeMs) -> {
+                    if (ctx.req().getDispatcherType() != DispatcherType.REQUEST) {
+                        return;
+                    }
+                    long durationMs = executionTimeMs != null ? Math.max(0L, Math.round(executionTimeMs)) : 0L;
+                    String clientIp = GameWebSocketHandler.resolveClientIp(
+                        ctx.req().getRemoteAddr(),
+                        trustProxy ? ctx.header("X-Forwarded-For") : null,
+                        trustProxy
+                    );
+                    auditLogger.logHttpAccess(
+                        clientIp,
+                        ctx.method().name(),
+                        ctx.path(),
+                        ctx.statusCode(),
+                        durationMs
+                    );
+                });
+            }
         });
-
-        if (logging.enabled() && logging.logHttpRequests()) {
-            boolean trustProxy = logging.trustProxyHeaders();
-            javalin.before(ctx -> ctx.attribute(REQ_START_NANOS_ATTR, System.nanoTime()));
-            javalin.after(ctx -> {
-                Long startNanos = ctx.attribute(REQ_START_NANOS_ATTR);
-                long durationMs = startNanos != null
-                    ? Math.max(0L, (System.nanoTime() - startNanos) / 1_000_000L)
-                    : 0L;
-                String clientIp = GameWebSocketHandler.resolveClientIp(
-                    ctx.req().getRemoteAddr(),
-                    trustProxy ? ctx.header("X-Forwarded-For") : null,
-                    trustProxy
-                );
-                auditLogger.logHttpAccess(clientIp, ctx.method().name(), ctx.path(), ctx.statusCode(), durationMs);
-            });
-        }
 
         new RestController(config, matchManager).register(javalin);
         new GameWebSocketHandler(matchManager, logging.trustProxyHeaders()).register(javalin);

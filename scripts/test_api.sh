@@ -10,9 +10,10 @@ usage() {
     cat <<'EOF'
 Usage: ./scripts/test_api.sh [--port <port>] [--help]
 
-Starts the packaged shaded server JAR on a temporary port (with --no-public-ip),
-runs HTTP smoke tests against /, /api/health, and /api/ai/status using curl,
-and shuts the server down cleanly.
+Starts the packaged shaded server JAR on a temporary port (with --no-public-ip
+and a temporary --log-file), runs HTTP smoke tests against /, /styles.css,
+/app.js, /api/health, /api/config, and /api/ai/status using curl, checks path
+traversal protection, shuts down cleanly, and verifies the JSONL audit log.
 
 Options:
   --port <port>  Port to bind during smoke test (default: 18089)

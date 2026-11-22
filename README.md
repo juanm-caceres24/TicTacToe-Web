@@ -6,7 +6,7 @@ A standalone Java 21 web server for **Mobile Tic-Tac-Toe** (*Three Men's Morris*
 - **Local PvP** on the same screen.
 - **Responsive web UI** designed for both desktop and mobile browsers across LAN, Tailscale, and port-forwarded public connections.
 
-> **Current Status:** `v0.6.0` — Complete release with responsive desktop/mobile frontend, SVG two-phase board, online matchmaking, local PvP, `NeuralNetwork` AI integration, and rotating JSON Lines audit logging.
+> **Current Status:** `v0.6.1` — Complete release with responsive desktop/mobile frontend, SVG two-phase board, online matchmaking, local PvP, `NeuralNetwork` AI integration, and rotating JSON Lines audit logging.
 
 ---
 
@@ -32,7 +32,7 @@ A standalone Java 21 web server for **Mobile Tic-Tac-Toe** (*Three Men's Morris*
 # 4. Launch the standalone server (prints Local LAN, Tailscale, and Public URLs + AI status)
 ./scripts/run.sh
 
-# 5. Run live HTTP & static-asset smoke tests against the shaded JAR
+# 5. Run live HTTP, static-asset, /api/config & JSONL audit log smoke tests against the shaded JAR
 ./scripts/test_api.sh
 ```
 
@@ -51,13 +51,13 @@ Override key `configs/server.json` options at launch time (`--config`, `--host`,
 TicTacToe-Web/
 ├── pom.xml
 ├── configs/
-│   ├── server.json                        # External server, IP lookup, and AI server config
+│   ├── server.json                        # External server, transport, audit logging, IP lookup & AI config
 │   └── tictactoe_nn_config.json           # Reference 9->41 architecture config for NeuralNetwork
 ├── scripts/
 │   ├── build.sh                           # Compile and package shaded JAR with strict warnings
 │   ├── test.sh                            # Run JUnit 5 test suite
 │   ├── run.sh                             # Launch standalone shaded JAR with CLI flags
-│   ├── test_api.sh                        # Live HTTP & static-asset smoke test with curl
+│   ├── test_api.sh                        # Live HTTP, static-asset, /api/config & JSONL audit smoke test
 │   └── generate_dataset.sh                # Generate data/tictactoe_dataset.csv via Retrograde Analysis
 ├── docs/
 │   ├── 00-project-specification.md        # Single source of truth
@@ -81,7 +81,9 @@ TicTacToe-Web/
     │   │   ├── solver/                    # Cycle-free RetrogradeSolver & DatasetExporter
     │   │   ├── match/                     # MatchmakingQueue, GameMatch, concurrent MatchManager
     │   │   └── web/                       # Javalin WebServer, RestController, GameWebSocketHandler
-    │   └── resources/web/                 # Responsive zero-framework UI (index.html, styles.css, app.js)
+    │   └── resources/
+    │       ├── version.properties         # Maven-filtered build version exposed via BuildInfo
+    │       └── web/                       # Responsive zero-framework UI (index.html, styles.css, app.js)
     └── test/java/com/tictactoe/
         ├── audit/                         # Append persistence, rolling rotation & log injection tests
         ├── engine/                        # Topology, rules, draw limits, and masking tests

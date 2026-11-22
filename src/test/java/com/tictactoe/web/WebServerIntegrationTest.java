@@ -541,11 +541,14 @@ class WebServerIntegrationTest {
     }
 
     @Test
-    void endToEndJsonlAuditLogRecordsServerLifecycleHttpAccessConnectionsModesAndProxyTrust(@TempDir Path tempDir)
+    void endToEndJsonlAuditLogRecordsServerLifecycleSingleHttpRootCloseStatusAndProxyValidation(@TempDir Path tempDir)
         throws Exception {
-        // Verify client IP extraction honors X-Forwarded-For ONLY when trustProxyHeaders=true.
+        // Verify client IP extraction honors valid IP in X-Forwarded-For ONLY when trustProxyHeaders=true,
+        // and falls back to socket IP when X-Forwarded-For contains invalid non-IP noise.
         assertEquals("198.51.100.7", GameWebSocketHandler.resolveClientIp("198.51.100.7", "203.0.113.9, 10.0.0.1", false));
         assertEquals("203.0.113.9", GameWebSocketHandler.resolveClientIp("198.51.100.7", "203.0.113.9, 10.0.0.1", true));
+        assertEquals("198.51.100.7", GameWebSocketHandler.resolveClientIp("198.51.100.7", "not-an-ip, 10.0.0.1", true));
+        assertEquals("198.51.100.7", GameWebSocketHandler.resolveClientIp("198.51.100.7", ":::bad:::", true));
 
         Path auditFile = tempDir.resolve("audit.log");
         ServerConfig.LoggingConfig logging = new ServerConfig.LoggingConfig(
@@ -556,7 +559,11 @@ class WebServerIntegrationTest {
             10,
             5
         );
-        int port = startServer(findClosedPort(), ServerConfig.TransportConfig.defaults(), logging);
+        int port = startServer(
+            findClosedPort(),
+            new ServerConfig.TransportConfig(65_536L, 1_024L, 60),
+            logging
+        );
         webServer.auditLogger().logServerStart(
             new com.tictactoe.net.ResolvedAddresses("127.0.0.1", port, "192.168.1.50", "100.64.0.10", null),
             webServer.config().aiServer().baseUrl(),
@@ -564,6 +571,13 @@ class WebServerIntegrationTest {
         );
 
         HttpClient http = HttpClient.newHttpClient();
+        // GET / must emit exactly ONE HTTP_ACCESS entry (no duplicate /index.html forward entry).
+        HttpResponse<String> rootResp = http.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/")).GET().build(),
+            HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(200, rootResp.statusCode());
+
         http.send(
             HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/health"))
                 .header("X-Forwarded-For", "9.9.9.9")
@@ -588,11 +602,17 @@ class WebServerIntegrationTest {
             client.awaitMessage("MATCH_LEFT");
         }
 
+        // Second client triggers an oversized frame (> 1,024 bytes) -> Jetty closes with RFC 6455 code 1009.
+        try (TestWsClient badClient = TestWsClient.connect(port)) {
+            badClient.send("{\"type\":\"JOIN_LOBBY\",\"username\":\"" + "X".repeat(2_048) + "\"}");
+            assertTrue(badClient.awaitClosed(3000));
+        }
+
         webServer.stopWithAudit("TEST_STOP", 123L);
         webServer = null;
 
         List<String> lines = Files.readAllLines(auditFile, StandardCharsets.UTF_8);
-        assertTrue(lines.size() >= 7, "Expected complete audit trail, got " + lines.size() + " lines");
+        assertTrue(lines.size() >= 9, "Expected complete audit trail, got " + lines.size() + " lines");
 
         List<JsonNode> events = lines.stream().map(line -> {
             try {
@@ -605,13 +625,14 @@ class WebServerIntegrationTest {
         assertEquals("SERVER_START", events.get(0).get("event").asText());
         assertEquals("SERVER_STOP", events.get(events.size() - 1).get("event").asText());
 
-        // HTTP_ACCESS ignored spoofed X-Forwarded-For (trustProxyHeaders=false) and recorded real socket IP 127.0.0.1.
-        JsonNode httpEv = events.stream()
-            .filter(e -> "HTTP_ACCESS".equals(e.get("event").asText()) && "/api/health".equals(e.get("path").asText()))
-            .findFirst()
-            .orElseThrow();
-        assertEquals("127.0.0.1", httpEv.get("ip").asText());
-        assertEquals(200, httpEv.get("status").asInt());
+        // Exactly 2 HTTP_ACCESS entries total (one for GET / and one for GET /api/health; zero /index.html duplicates).
+        List<JsonNode> httpEvents = events.stream()
+            .filter(e -> "HTTP_ACCESS".equals(e.get("event").asText()))
+            .toList();
+        assertEquals(2, httpEvents.size(), "Expected exactly 2 HTTP_ACCESS entries, got: " + httpEvents);
+        assertEquals("/", httpEvents.get(0).get("path").asText());
+        assertEquals("/api/health", httpEvents.get(1).get("path").asText());
+        assertEquals("127.0.0.1", httpEvents.get(1).get("ip").asText());
 
         assertTrue(events.stream().anyMatch(
             e -> "WS_CONNECT".equals(e.get("event").asText()) && "127.0.0.1".equals(e.get("ip").asText())
@@ -631,9 +652,41 @@ class WebServerIntegrationTest {
         assertEquals("X_WINS", matchEnds.get(0).get("status").asText());
         assertEquals("COMPLETED", matchEnds.get(0).get("reason").asText());
 
-        assertTrue(events.stream().anyMatch(
-            e -> "WS_DISCONNECT".equals(e.get("event").asText()) && "Auditor".equals(e.get("username").asText())
-        ));
+        // Oversized frame disconnect must preserve closeStatus=1009 instead of null.
+        assertTrue(
+            events.stream().anyMatch(
+                e -> "WS_DISCONNECT".equals(e.get("event").asText())
+                    && !e.get("closeStatus").isNull()
+                    && e.get("closeStatus").asInt() == 1009
+            ),
+            "Expected WS_DISCONNECT with closeStatus=1009 in " + events
+        );
+
+        // Verify logHttpRequests=false suppresses HTTP_ACCESS while still recording WebSocket & match events.
+        Path noHttpLog = tempDir.resolve("audit-no-http.log");
+        int port2 = startServer(
+            findClosedPort(),
+            ServerConfig.TransportConfig.defaults(),
+            new ServerConfig.LoggingConfig(true, noHttpLog.toString(), false, false, 10, 5)
+        );
+        http.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port2 + "/api/health")).GET().build(),
+            HttpResponse.BodyHandlers.ofString()
+        );
+        try (TestWsClient c2 = TestWsClient.connect(port2)) {
+            c2.send("{\"type\":\"JOIN_LOBBY\",\"username\":\"QuietHttp\"}");
+            c2.awaitMessage("WELCOME");
+            c2.send("{\"type\":\"START_LOCAL_GAME\"}");
+            c2.awaitMessage("MATCH_FOUND");
+            c2.awaitMessage("GAME_STATE");
+        }
+        webServer.stopWithAudit("TEST_STOP", 10L);
+        webServer = null;
+
+        List<String> noHttpLines = Files.readAllLines(noHttpLog, StandardCharsets.UTF_8);
+        assertFalse(noHttpLines.stream().anyMatch(l -> l.contains("\"HTTP_ACCESS\"")));
+        assertTrue(noHttpLines.stream().anyMatch(l -> l.contains("\"WS_CONNECT\"")));
+        assertTrue(noHttpLines.stream().anyMatch(l -> l.contains("\"MATCH_START\"")));
     }
 
     private static void sendJson(HttpExchange exchange, int status, String json) throws IOException {
