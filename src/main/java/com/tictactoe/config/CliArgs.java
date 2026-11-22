@@ -4,7 +4,7 @@ import java.nio.file.Path;
 import java.util.Objects;
 
 /**
- * Parsed command-line arguments for overriding {@link ServerConfig} settings at startup.
+ * Parsed command-line arguments for overriding key {@link ServerConfig} settings at startup.
  */
 public record CliArgs(
     boolean helpRequested,
@@ -13,7 +13,8 @@ public record CliArgs(
     Integer portOverride,
     String aiHostOverride,
     Integer aiPortOverride,
-    Boolean publicIpEnabledOverride
+    Boolean publicIpEnabledOverride,
+    String logFileOverride
 ) {
 
     public static final Path DEFAULT_CONFIG_PATH = Path.of("configs", "server.json");
@@ -33,6 +34,7 @@ public record CliArgs(
         String aiHost = null;
         Integer aiPort = null;
         Boolean publicIpEnabled = null;
+        String logFile = null;
 
         for (int i = 0; i < args.length; i++) {
             String flag = args[i];
@@ -60,13 +62,17 @@ public record CliArgs(
                     i++;
                 }
                 case "--no-public-ip" -> publicIpEnabled = Boolean.FALSE;
+                case "--log-file" -> {
+                    logFile = requireNonBlankValue(args, i, flag);
+                    i++;
+                }
                 default -> throw new IllegalArgumentException(
                     "Unknown argument '" + flag + "'. Use --help for usage."
                 );
             }
         }
 
-        return new CliArgs(help, configPath, host, port, aiHost, aiPort, publicIpEnabled);
+        return new CliArgs(help, configPath, host, port, aiHost, aiPort, publicIpEnabled, logFile);
     }
 
     /**
@@ -83,6 +89,7 @@ public record CliArgs(
               --port <port>      Override server listening port [0..65535]
               --ai-host <host>   Override external NeuralNetwork server host
               --ai-port <port>   Override external NeuralNetwork server port [1..65535]
+              --log-file <path>  Override JSONL audit log file path (default: logs/audit.log)
               --no-public-ip     Disable external public IP lookup at startup
               -h, --help         Show this help message and exit
             """;

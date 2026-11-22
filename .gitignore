@@ -10,6 +10,9 @@ dependency-reduced-pom.xml
 # Generated training datasets (large CSV files)
 data/*.csv
 
+# Runtime audit logs
+logs/
+
 # Java / JVM artifacts
 *.class
 *.jar

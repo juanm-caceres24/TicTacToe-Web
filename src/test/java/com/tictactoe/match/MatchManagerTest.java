@@ -123,6 +123,7 @@ class MatchManagerTest {
             repLimit,
             maxPlies,
             ServerConfig.TransportConfig.defaults(),
+            ServerConfig.LoggingConfig.disabled(),
             new ServerConfig.PublicIpLookupConfig(false, "https://api.ipify.org", 1000),
             new ServerConfig.AiServerConfig("127.0.0.1", aiPort, 500, 1500, 4)
         );

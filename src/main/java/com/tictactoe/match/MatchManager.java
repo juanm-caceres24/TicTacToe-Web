@@ -4,6 +4,7 @@ import com.tictactoe.ai.AiClientException;
 import com.tictactoe.ai.AiPrediction;
 import com.tictactoe.ai.AiStatus;
 import com.tictactoe.ai.NeuralNetworkClient;
+import com.tictactoe.audit.AuditLogger;
 import com.tictactoe.config.ServerConfig;
 import com.tictactoe.engine.GameEngine;
 import com.tictactoe.engine.Move;
@@ -21,7 +22,7 @@ import java.util.regex.Pattern;
 /**
  * Coordinates player sessions, online FIFO matchmaking, concurrent games across all 3 modes
  * ({@link MatchMode#ONLINE_PVP}, {@link MatchMode#VS_AI}, {@link MatchMode#LOCAL_PVP}),
- * and asynchronous AI inference turns without blocking WebSocket I/O threads.
+ * structured JSONL audit logging, and asynchronous AI inference turns without blocking WebSocket I/O threads.
  */
 public final class MatchManager implements AutoCloseable {
 
@@ -29,14 +30,20 @@ public final class MatchManager implements AutoCloseable {
 
     private final ServerConfig config;
     private final NeuralNetworkClient aiClient;
+    private final AuditLogger auditLogger;
     private final MatchmakingQueue queue = new MatchmakingQueue();
     private final ConcurrentHashMap<String, PlayerSession> sessions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, GameMatch> activeMatches = new ConcurrentHashMap<>();
     private final ExecutorService aiExecutor;
 
     public MatchManager(ServerConfig config, NeuralNetworkClient aiClient) {
+        this(config, aiClient, AuditLogger.noop());
+    }
+
+    public MatchManager(ServerConfig config, NeuralNetworkClient aiClient, AuditLogger auditLogger) {
         this.config = Objects.requireNonNull(config, "config must not be null");
         this.aiClient = Objects.requireNonNull(aiClient, "aiClient must not be null");
+        this.auditLogger = Objects.requireNonNull(auditLogger, "auditLogger must not be null");
         AtomicInteger workerId = new AtomicInteger(1);
         this.aiExecutor = Executors.newFixedThreadPool(config.aiServer().workerThreads(), runnable -> {
             Thread thread = new Thread(runnable, "ai-worker-" + workerId.getAndIncrement());
@@ -46,24 +53,46 @@ public final class MatchManager implements AutoCloseable {
     }
 
     /**
-     * Registers a newly connected WebSocket session.
+     * Registers a newly connected WebSocket session with unknown remote IP (primarily for unit tests).
      */
     public PlayerSession registerSession(String sessionId, SessionSender sender) {
-        PlayerSession session = new PlayerSession(sessionId, sender);
+        return registerSession(sessionId, "unknown", sender);
+    }
+
+    /**
+     * Registers a newly connected WebSocket session with its client IP and emits {@code WS_CONNECT}.
+     */
+    public PlayerSession registerSession(String sessionId, String remoteIp, SessionSender sender) {
+        PlayerSession session = new PlayerSession(sessionId, remoteIp, sender);
         sessions.put(sessionId, session);
+        auditLogger.logWsConnect(sessionId, session.remoteIp());
         return session;
     }
 
     /**
-     * Cleans up queue membership and notifies any active online opponent when a session disconnects.
+     * Cleans up queue membership, notifies any active online opponent, and emits {@code WS_DISCONNECT}.
      */
     public void unregisterSession(String sessionId) {
+        unregisterSession(sessionId, null);
+    }
+
+    /**
+     * Cleans up a disconnecting session, recording the WebSocket close status code when available.
+     */
+    public void unregisterSession(String sessionId, Integer closeStatus) {
         PlayerSession session = sessions.remove(sessionId);
         if (session == null) {
             return;
         }
         queue.remove(session);
-        leaveCurrentMatchInternal(session, false);
+        leaveCurrentMatchInternal(session, false, "DISCONNECT");
+        auditLogger.logWsDisconnect(
+            session.sessionId(),
+            session.remoteIp(),
+            session.username(),
+            session.connectedDurationMs(),
+            closeStatus
+        );
     }
 
     /**
@@ -84,6 +113,7 @@ public final class MatchManager implements AutoCloseable {
         }
 
         session.setUsername(sanitized);
+        auditLogger.logLobbyJoin(session.sessionId(), session.remoteIp(), sanitized);
         AiStatus aiStatus = aiClient.checkStatus();
         session.send(ProtocolMessages.WelcomeMessage.of(sessionId, sanitized, aiStatus));
     }
@@ -97,7 +127,7 @@ public final class MatchManager implements AutoCloseable {
             return;
         }
 
-        leaveCurrentMatchInternal(session, false);
+        leaveCurrentMatchInternal(session, false, "SWITCH_MODE");
 
         if (activeMatches.size() >= config.maxConcurrentMatches()) {
             session.send(ProtocolMessages.ErrorMessage.of(
@@ -109,8 +139,9 @@ public final class MatchManager implements AutoCloseable {
 
         Optional<MatchmakingQueue.PairedPlayers> paired = queue.enqueueOrPair(session);
         if (paired.isEmpty()) {
-            int pos = queue.positionOf(session);
-            session.send(ProtocolMessages.QueueJoinedMessage.of(Math.max(1, pos)));
+            int pos = Math.max(1, queue.positionOf(session));
+            auditLogger.logQueueJoin(session.sessionId(), session.remoteIp(), session.username(), pos);
+            session.send(ProtocolMessages.QueueJoinedMessage.of(pos));
             return;
         }
 
@@ -127,6 +158,8 @@ public final class MatchManager implements AutoCloseable {
         activeMatches.put(matchId, match);
         playerX.setActiveMatchId(matchId);
         playerO.setActiveMatchId(matchId);
+
+        logMatchStart(match, false);
 
         playerX.send(ProtocolMessages.MatchFoundMessage.of(
             matchId, MatchMode.ONLINE_PVP.name(), "X", playerO.username(), match.playerXName(), match.playerOName()
@@ -145,7 +178,9 @@ public final class MatchManager implements AutoCloseable {
         if (session == null) {
             return;
         }
-        queue.remove(session);
+        if (queue.remove(session)) {
+            auditLogger.logQueueCancel(session.sessionId(), session.remoteIp(), session.username());
+        }
         session.send(ProtocolMessages.QueueCancelledMessage.instance());
     }
 
@@ -159,7 +194,7 @@ public final class MatchManager implements AutoCloseable {
         }
 
         queue.remove(session);
-        leaveCurrentMatchInternal(session, false);
+        leaveCurrentMatchInternal(session, false, "SWITCH_MODE");
 
         if (activeMatches.size() >= config.maxConcurrentMatches()) {
             session.send(ProtocolMessages.ErrorMessage.of(
@@ -193,6 +228,8 @@ public final class MatchManager implements AutoCloseable {
         activeMatches.put(matchId, match);
         session.setActiveMatchId(matchId);
 
+        logMatchStart(match, false);
+
         session.send(ProtocolMessages.MatchFoundMessage.of(
             matchId,
             MatchMode.VS_AI.name(),
@@ -219,7 +256,7 @@ public final class MatchManager implements AutoCloseable {
         }
 
         queue.remove(session);
-        leaveCurrentMatchInternal(session, false);
+        leaveCurrentMatchInternal(session, false, "SWITCH_MODE");
 
         if (activeMatches.size() >= config.maxConcurrentMatches()) {
             session.send(ProtocolMessages.ErrorMessage.of(
@@ -238,6 +275,8 @@ public final class MatchManager implements AutoCloseable {
         );
         activeMatches.put(matchId, match);
         session.setActiveMatchId(matchId);
+
+        logMatchStart(match, false);
 
         session.send(ProtocolMessages.MatchFoundMessage.of(
             matchId,
@@ -282,6 +321,8 @@ public final class MatchManager implements AutoCloseable {
             return;
         }
 
+        logMatchEndIfTerminal(match);
+
         if (match.shouldTriggerAiTurn()) {
             // Broadcast the human move immediately (with aiThinking=true) and invoke NeuralNetwork asynchronously.
             scheduleAiTurn(match);
@@ -323,6 +364,10 @@ public final class MatchManager implements AutoCloseable {
             }
         }
 
+        // Capture pre-reset state in case a mid-game restart happens in VS_AI or LOCAL_PVP.
+        GameEngine beforeReset = match.engineSnapshot();
+        long priorDurationMs = match.roundDurationMs();
+
         boolean restarted;
         try {
             restarted = match.requestRematch(sessionId);
@@ -338,6 +383,20 @@ public final class MatchManager implements AutoCloseable {
                 ));
             return;
         }
+
+        if (!beforeReset.getStatus().isTerminal()) {
+            auditLogger.logMatchEnd(
+                match.matchId(),
+                match.mode().name(),
+                "ABANDONED",
+                null,
+                beforeReset.getDrawReason().name(),
+                beforeReset.getTotalPlies(),
+                priorDurationMs,
+                "RESTARTED"
+            );
+        }
+        logMatchStart(match, true);
 
         if (match.shouldTriggerAiTurn()) {
             scheduleAiTurn(match);
@@ -380,7 +439,7 @@ public final class MatchManager implements AutoCloseable {
         if (session == null) {
             return;
         }
-        leaveCurrentMatchInternal(session, true);
+        leaveCurrentMatchInternal(session, true, "PLAYER_LEFT");
     }
 
     /**
@@ -438,7 +497,10 @@ public final class MatchManager implements AutoCloseable {
     @Override
     public void close() {
         aiExecutor.shutdownNow();
-        activeMatches.values().forEach(GameMatch::markClosed);
+        for (GameMatch match : activeMatches.values()) {
+            logMatchEndOnAbandon(match, "SERVER_SHUTDOWN");
+            match.markClosed();
+        }
         activeMatches.clear();
         sessions.clear();
     }
@@ -456,6 +518,7 @@ public final class MatchManager implements AutoCloseable {
             try {
                 AiPrediction prediction = aiClient.predictMove(snapshot);
                 if (match.completeAiTurn(prediction)) {
+                    logMatchEndIfTerminal(match);
                     broadcastGameState(match);
                 }
             } catch (AiClientException e) {
@@ -486,7 +549,7 @@ public final class MatchManager implements AutoCloseable {
         });
     }
 
-    private void leaveCurrentMatchInternal(PlayerSession session, boolean confirmToLeaver) {
+    private void leaveCurrentMatchInternal(PlayerSession session, boolean confirmToLeaver, String abandonReason) {
         String matchId = session.activeMatchId();
         session.setActiveMatchId(null);
         if (matchId == null) {
@@ -497,6 +560,8 @@ public final class MatchManager implements AutoCloseable {
         if (match == null) {
             return;
         }
+
+        logMatchEndOnAbandon(match, abandonReason);
 
         Optional<PlayerSession> opponent = match.opponentOf(session.sessionId());
         match.markClosed();
@@ -516,6 +581,63 @@ public final class MatchManager implements AutoCloseable {
         if (confirmToLeaver) {
             session.send(ProtocolMessages.MatchLeftMessage.of(matchId));
         }
+    }
+
+    private void logMatchStart(GameMatch match, boolean rematch) {
+        auditLogger.logMatchStart(
+            match.matchId(),
+            match.mode().name(),
+            match.playerXName(),
+            match.playerXIp(),
+            match.playerOName(),
+            match.playerOIp(),
+            String.valueOf(match.startingPlayer().symbol()),
+            rematch
+        );
+    }
+
+    private void logMatchEndIfTerminal(GameMatch match) {
+        GameEngine snap = match.engineSnapshot();
+        if (!snap.getStatus().isTerminal()) {
+            return;
+        }
+        if (!match.markEndLoggedIfNotYet()) {
+            return;
+        }
+        String winnerName = snap.getWinner()
+            .map(w -> w == Player.X ? match.playerXName() : match.playerOName())
+            .orElse(null);
+        auditLogger.logMatchEnd(
+            match.matchId(),
+            match.mode().name(),
+            snap.getStatus().name(),
+            winnerName,
+            snap.getDrawReason().name(),
+            snap.getTotalPlies(),
+            match.roundDurationMs(),
+            "COMPLETED"
+        );
+    }
+
+    private void logMatchEndOnAbandon(GameMatch match, String reason) {
+        if (!match.markEndLoggedIfNotYet()) {
+            return;
+        }
+        GameEngine snap = match.engineSnapshot();
+        String status = snap.getStatus().isTerminal() ? snap.getStatus().name() : "ABANDONED";
+        String winnerName = snap.getWinner()
+            .map(w -> w == Player.X ? match.playerXName() : match.playerOName())
+            .orElse(null);
+        auditLogger.logMatchEnd(
+            match.matchId(),
+            match.mode().name(),
+            status,
+            winnerName,
+            snap.getDrawReason().name(),
+            snap.getTotalPlies(),
+            match.roundDurationMs(),
+            reason
+        );
     }
 
     private PlayerSession requireLoggedIn(String sessionId) {

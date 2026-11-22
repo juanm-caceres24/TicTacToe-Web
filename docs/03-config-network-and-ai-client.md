@@ -22,6 +22,14 @@ All runtime settings live outside source code in `configs/server.json`:
     "maxWsMessageBytes": 8192,
     "wsIdleTimeoutSeconds": 300
   },
+  "logging": {
+    "enabled": true,
+    "filePath": "logs/audit.log",
+    "logHttpRequests": true,
+    "trustProxyHeaders": false,
+    "maxFileSizeMb": 10,
+    "maxBackupFiles": 5
+  },
   "publicIpLookup": {
     "enabled": true,
     "url": "https://api.ipify.org",
@@ -46,6 +54,7 @@ All runtime settings live outside source code in `configs/server.json`:
 - `--port <port>` — Override server listening port (`0..65535`)
 - `--ai-host <host>` — Override external `NeuralNetwork` host
 - `--ai-port <port>` — Override external `NeuralNetwork` port (`1..65535`)
+- `--log-file <path>` — Override JSONL audit log file path (default: `logs/audit.log`)
 - `--no-public-ip` — Disable startup public IP lookup
 - `-h`, `--help` — Print usage instructions and exit with code `0`
 

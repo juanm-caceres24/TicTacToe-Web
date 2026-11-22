@@ -22,6 +22,7 @@ public record ServerConfig(
     int repetitionLimit,
     int maxMovementPlies,
     TransportConfig transport,
+    LoggingConfig logging,
     PublicIpLookupConfig publicIpLookup,
     AiServerConfig aiServer
 ) {
@@ -57,6 +58,46 @@ public record ServerConfig(
 
         public static TransportConfig defaults() {
             return new TransportConfig(65_536L, 8_192L, 300);
+        }
+    }
+
+    /**
+     * File-only JSON Lines (NDJSON) audit logging and size-based log rotation settings.
+     */
+    public record LoggingConfig(
+        boolean enabled,
+        String filePath,
+        boolean logHttpRequests,
+        boolean trustProxyHeaders,
+        int maxFileSizeMb,
+        int maxBackupFiles
+    ) {
+        public LoggingConfig {
+            if (filePath == null || filePath.isBlank()) {
+                throw new IllegalArgumentException("logging.filePath must not be blank");
+            }
+            if (maxFileSizeMb < 1 || maxFileSizeMb > 1024) {
+                throw new IllegalArgumentException(
+                    "logging.maxFileSizeMb must be in [1..1024], got " + maxFileSizeMb
+                );
+            }
+            if (maxBackupFiles < 0 || maxBackupFiles > 100) {
+                throw new IllegalArgumentException(
+                    "logging.maxBackupFiles must be in [0..100], got " + maxBackupFiles
+                );
+            }
+        }
+
+        public long maxFileSizeBytes() {
+            return maxFileSizeMb * 1024L * 1024L;
+        }
+
+        public static LoggingConfig defaults() {
+            return new LoggingConfig(true, "logs/audit.log", true, false, 10, 5);
+        }
+
+        public static LoggingConfig disabled() {
+            return new LoggingConfig(false, "logs/audit.log", false, false, 10, 5);
         }
     }
 
@@ -157,6 +198,7 @@ public record ServerConfig(
             throw new IllegalArgumentException("maxMovementPlies must be >= 1, got " + maxMovementPlies);
         }
         Objects.requireNonNull(transport, "transport configuration is required");
+        Objects.requireNonNull(logging, "logging configuration is required");
         Objects.requireNonNull(publicIpLookup, "publicIpLookup configuration is required");
         Objects.requireNonNull(aiServer, "aiServer configuration is required");
     }
@@ -174,6 +216,7 @@ public record ServerConfig(
             GameEngine.DEFAULT_REPETITION_LIMIT,
             GameEngine.DEFAULT_MAX_MOVEMENT_PLIES,
             TransportConfig.defaults(),
+            LoggingConfig.defaults(),
             PublicIpLookupConfig.defaults(),
             AiServerConfig.defaults()
         );
@@ -204,6 +247,17 @@ public record ServerConfig(
         String effectiveHost = cliArgs.hostOverride() != null ? cliArgs.hostOverride() : this.host;
         int effectivePort = cliArgs.portOverride() != null ? cliArgs.portOverride() : this.port;
 
+        LoggingConfig effectiveLogging = cliArgs.logFileOverride() != null
+            ? new LoggingConfig(
+                this.logging.enabled(),
+                cliArgs.logFileOverride(),
+                this.logging.logHttpRequests(),
+                this.logging.trustProxyHeaders(),
+                this.logging.maxFileSizeMb(),
+                this.logging.maxBackupFiles()
+            )
+            : this.logging;
+
         PublicIpLookupConfig effectivePublicIp = cliArgs.publicIpEnabledOverride() != null
             ? new PublicIpLookupConfig(
                 cliArgs.publicIpEnabledOverride(),
@@ -229,6 +283,7 @@ public record ServerConfig(
             this.repetitionLimit,
             this.maxMovementPlies,
             this.transport,
+            effectiveLogging,
             effectivePublicIp,
             effectiveAi
         );
