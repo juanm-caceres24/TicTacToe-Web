@@ -129,15 +129,24 @@ class MoveEncoderTest {
         GameEngine engine = new GameEngine();
         engine.placePiece(0); // X placed at 0; now O's turn, legal placements are 1..8.
 
-        // Mix of NaN and one valid finite score
+        // Mix of NaN, +Infinity, -Infinity and two finite scores -> finite scores win and preserve exact ratios.
         double[] mixed = new double[41];
         Arrays.fill(mixed, Double.NaN);
-        mixed[6] = 0.15;
+        mixed[2] = Double.POSITIVE_INFINITY;
+        mixed[3] = Double.NEGATIVE_INFINITY;
+        mixed[6] = 0.90;
+        mixed[7] = 0.10;
         MoveEncoder.MaskedSelection mixedSelection = MoveEncoder.selectBestLegalMove(engine, mixed);
         assertEquals(Move.placement(6), mixedSelection.bestMove());
-        assertEquals(1.0, Arrays.stream(mixedSelection.normalizedLegalProbabilities()).sum(), 1e-9);
+        assertEquals(0.90, mixedSelection.bestScore(), 1e-9);
+        double[] mixedProbs = mixedSelection.normalizedLegalProbabilities();
+        assertEquals(0.0, mixedProbs[2], 1e-9);
+        assertEquals(0.0, mixedProbs[3], 1e-9);
+        assertEquals(0.90, mixedProbs[6], 1e-9);
+        assertEquals(0.10, mixedProbs[7], 1e-9);
+        assertEquals(1.0, Arrays.stream(mixedProbs).sum(), 1e-9);
 
-        // All NaN -> deterministic fallback to first legal move (cell 1)
+        // All NaN -> deterministic fallback to first legal move (cell 1) with uniform distribution.
         double[] allNaN = new double[41];
         Arrays.fill(allNaN, Double.NaN);
         MoveEncoder.MaskedSelection fallback = MoveEncoder.selectBestLegalMove(engine, allNaN);
@@ -148,6 +157,40 @@ class MoveEncoderTest {
         assertEquals(0.0, uniform[0], 1e-9);
         assertEquals(1.0 / 8.0, uniform[1], 1e-9);
         assertEquals(1.0, Arrays.stream(uniform).sum(), 1e-9);
+
+        // All +Infinity -> deterministic fallback to first legal move (cell 1) with uniform distribution.
+        double[] allInf = new double[41];
+        Arrays.fill(allInf, Double.POSITIVE_INFINITY);
+        MoveEncoder.MaskedSelection infFallback = MoveEncoder.selectBestLegalMove(engine, allInf);
+        assertEquals(Move.placement(1), infFallback.bestMove());
+        assertEquals(1.0 / 8.0, infFallback.normalizedLegalProbabilities()[1], 1e-9);
+    }
+
+    @Test
+    void selectBestLegalMoveHandlesAllZerosTieBreakingExtremeLogitsAndDefensiveCopies() {
+        GameEngine engine = new GameEngine();
+
+        // All zeros -> deterministic tie-break to lowest legal index (0) and uniform distribution.
+        double[] zeros = new double[41];
+        MoveEncoder.MaskedSelection zeroSel = MoveEncoder.selectBestLegalMove(engine, zeros);
+        assertEquals(Move.placement(0), zeroSel.bestMove());
+        assertEquals(1.0 / 9.0, zeroSel.normalizedLegalProbabilities()[0], 1e-9);
+
+        // Extreme logits (±1000) must not overflow exp() in stable softmax.
+        double[] extreme = new double[41];
+        Arrays.fill(extreme, -1000.0);
+        extreme[4] = 1000.0;
+        extreme[8] = 1000.0; // tie with 4 -> lowest index (4) wins deterministically
+        MoveEncoder.MaskedSelection extSel = MoveEncoder.selectBestLegalMove(engine, extreme);
+        assertEquals(Move.placement(4), extSel.bestMove());
+        double[] extProbs = extSel.normalizedLegalProbabilities();
+        assertEquals(0.5, extProbs[4], 1e-9);
+        assertEquals(0.5, extProbs[8], 1e-9);
+        assertEquals(1.0, Arrays.stream(extProbs).sum(), 1e-9);
+
+        // Mutating returned probability array must not affect internal record state.
+        extProbs[4] = 0.0;
+        assertEquals(0.5, extSel.normalizedLegalProbabilities()[4], 1e-9);
     }
 
     @Test
