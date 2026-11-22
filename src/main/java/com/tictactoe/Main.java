@@ -72,9 +72,7 @@ public final class Main {
         ResolvedAddresses addresses = NetworkAddressResolver.resolve(config, activePort);
         AiStatus aiStatus = server.aiClient().checkStatus();
         server.auditLogger().logServerStart(addresses, config.aiServer().baseUrl(), aiStatus);
-        System.out.println(addresses.formatStartupBanner(config.aiServer().baseUrl(), aiStatus));
-        if (config.logging().enabled()) {
-            System.out.println("  Audit Log   : " + config.logging().filePath());
-        }
+        String auditLogPath = config.logging().enabled() ? config.logging().filePath() : null;
+        System.out.println(addresses.formatStartupBanner(config.aiServer().baseUrl(), aiStatus, auditLogPath));
     }
 }

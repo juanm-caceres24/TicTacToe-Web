@@ -23,6 +23,14 @@ public record ResolvedAddresses(
      * Formats the startup console banner showing all reachable URLs and optional AI server status.
      */
     public String formatStartupBanner(String aiServerUrl, AiStatus aiStatus) {
+        return formatStartupBanner(aiServerUrl, aiStatus, null);
+    }
+
+    /**
+     * Formats the startup console banner showing all reachable URLs, optional AI server status,
+     * and optional active audit log file path.
+     */
+    public String formatStartupBanner(String aiServerUrl, AiStatus aiStatus, String auditLogPath) {
         StringBuilder sb = new StringBuilder();
         sb.append("==========================================================\n");
         sb.append("  TicTacToe-Web Server listening on ").append(bindHost).append(':').append(port).append('\n');
@@ -33,6 +41,9 @@ public record ResolvedAddresses(
         if (aiServerUrl != null) {
             String statusText = aiStatus != null ? aiStatus.summaryText() : "UNKNOWN";
             sb.append("  AI Server   : ").append(aiServerUrl).append(" [").append(statusText).append("]\n");
+        }
+        if (auditLogPath != null && !auditLogPath.isBlank()) {
+            sb.append("  Audit Log   : ").append(auditLogPath).append('\n');
         }
         sb.append("==========================================================");
         return sb.toString();
