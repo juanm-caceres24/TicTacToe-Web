@@ -10,7 +10,7 @@ import java.util.Objects;
  */
 public final class RestController {
 
-    public static final String SERVER_VERSION = "0.4.0";
+    public static final String SERVER_VERSION = "0.5.0";
 
     private final MatchManager matchManager;
 
