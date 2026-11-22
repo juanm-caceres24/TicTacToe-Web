@@ -74,20 +74,21 @@ The TicTacToe-Web server acts as an HTTP/1.1 + JSON client against the external 
   - Stage 2: Jackson Databind (JSON config & AI HTTP client using JDK `java.net.http.HttpClient`).
   - Stage 4: Javalin 6 + `slf4j-simple` (HTTP static hosting, REST endpoints, and WebSockets on a single port).
 - **Network Startup Banner (Stage 2 / Stage 4):** Prints Local LAN IP, Tailscale IP (`100.64.0.0/10`), Public IP, and configured port at startup.
-- **Zero Hardcoding:** All server and AI parameters loaded from `configs/server.json` with CLI override flags (`--config`, `--host`, `--port`, `--ai-host`, `--ai-port`, `--help`).
+- **Externalized Configuration:** Server bind settings, gameplay limits (`minUsernameLength`, `maxUsernameLength`, `repetitionLimit`, `maxMovementPlies`), HTTP/WebSocket transport limits, public IP lookup settings, and AI server parameters (`host`, `port`, timeouts, `workerThreads`) are loaded from `configs/server.json` and exposed to the frontend via `GET /api/config`. Key launch flags can be overridden via CLI (`--config`, `--host`, `--port`, `--ai-host`, `--ai-port`, `--no-public-ip`, `-h`, `--help`).
 
 ---
 
-## 5. Planned Communication Protocol (Stage 4)
+## 5. Communication Protocol
 
 - **HTTP REST (same port):**
   - `GET /` → static web frontend (`index.html`, `styles.css`, `app.js`).
-  - `GET /api/health` → server health, active matches, queue size.
+  - `GET /api/health` → server health, build version, connected sessions, queue size, and active matches.
+  - `GET /api/config` → public gameplay bounds (`version`, `minUsernameLength`, `maxUsernameLength`, `repetitionLimit`, `maxMovementPlies`) synchronized with `configs/server.json`.
   - `GET /api/ai/status` → live health and `9 → 41` model compatibility status of `NeuralNetwork`.
 - **WebSocket (`GET /ws`, HTTP Upgrade on the same port):**
   - Bidirectional JSON text frames between each browser and the Java server (client-server, never P2P).
-  - Client → Server: `JOIN_LOBBY`, `QUEUE_ONLINE`, `CANCEL_QUEUE`, `START_AI_GAME`, `START_LOCAL_GAME`, `PLACE_PIECE`, `MOVE_PIECE`, `LEAVE_MATCH`, `PLAY_AGAIN`.
-  - Server → Client: `WELCOME`, `QUEUE_JOINED`, `MATCH_FOUND`, `GAME_STATE` (including backend-computed `legalMoves` and optional AI probability overlay), `OPPONENT_LEFT`, `ERROR`.
+  - Client → Server: `JOIN_LOBBY`, `QUEUE_ONLINE`, `CANCEL_QUEUE`, `START_AI_GAME`, `START_LOCAL_GAME`, `PLACE_PIECE`, `MOVE_PIECE`, `PLAY_AGAIN`, `RETRY_AI_MOVE`, `LEAVE_MATCH`.
+  - Server → Client: `WELCOME`, `QUEUE_JOINED`, `QUEUE_CANCELLED`, `MATCH_FOUND`, `GAME_STATE` (including backend-computed `legalMoves`, `repetitionLimit`, and optional AI probability overlay), `REMATCH_REQUESTED`, `OPPONENT_LEFT`, `MATCH_LEFT`, `ERROR`.
 
 ---
 
@@ -100,3 +101,4 @@ The TicTacToe-Web server acts as an HTTP/1.1 + JSON client against the external 
 | **Stage 3** | `v0.3.0` | Exact Retrograde Analysis solver (cycle-free optimal tablebase), `DatasetGenMain` CSV exporter (`9 + 41`), `configs/tictactoe_nn_config.json` | **Completed** |
 | **Stage 4** | `v0.4.0` | Javalin 6 server, FIFO Online Matchmaking, concurrent `MatchManager`, async AI turns, REST + WebSocket `/ws` + E2E tests | **Completed** |
 | **Stage 5** | `v0.5.0` | Responsive vanilla HTML5/CSS3/JS frontend (desktop + mobile touch), SVG topology board, AI latency/probability overlay, final E2E verification | **Completed** |
+| **Hardening** | `v0.5.1` | Audit fixes (WS reconnect recovery, `MoveEncoder` finite masking, IPv6 validation, `/api/config` frontend sync, transport & worker config, expanded test coverage) | **Completed** |
