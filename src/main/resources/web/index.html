@@ -2,14 +2,209 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TicTacToe-Web</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Mobile Tic-Tac-Toe</title>
+    <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-    <main>
-        <h1>TicTacToe-Web Server</h1>
-        <p>Backend API (<code>/api/health</code>, <code>/api/ai/status</code>) and WebSocket (<code>/ws</code>) are running.</p>
-        <p>Full responsive UI arrives in Stage 5 (<code>v0.5.0</code>).</p>
-    </main>
+    <div class="app-shell">
+        <header class="top-bar">
+            <div class="brand">
+                <span class="brand-mark" aria-hidden="true">✕○</span>
+                <div>
+                    <h1 class="brand-title">Mobile Tic-Tac-Toe</h1>
+                    <p class="brand-subtitle">3-Piece Classic · Online &amp; NeuralNetwork AI</p>
+                </div>
+            </div>
+            <div class="status-pills">
+                <span id="ws-status-pill" class="pill pill-neutral" role="status">Connecting...</span>
+                <div class="ai-pill-group">
+                    <span id="ai-status-pill" class="pill pill-neutral" role="status">AI: Checking...</span>
+                    <button id="btn-refresh-ai" class="icon-btn" type="button" title="Refresh AI server status" aria-label="Refresh AI server status">↻</button>
+                </div>
+            </div>
+        </header>
+
+        <div id="toast-banner" class="toast hidden" role="alert" aria-live="polite"></div>
+
+        <!-- VIEW 1: USERNAME ENTRY -->
+        <main id="view-login" class="view active">
+            <section class="card login-card">
+                <h2>Enter Your Username</h2>
+                <p class="muted">Choose a display name to play online against other players, challenge the external NeuralNetwork AI, or play locally on one screen.</p>
+
+                <form id="login-form" class="login-form" novalidate>
+                    <label class="field-label" for="username-input">Username</label>
+                    <div class="input-row">
+                        <input
+                            id="username-input"
+                            type="text"
+                            maxlength="20"
+                            autocomplete="nickname"
+                            placeholder="e.g. Alex_99"
+                            required
+                        >
+                        <button id="btn-join-lobby" class="btn btn-primary" type="submit">Continue</button>
+                    </div>
+                    <p class="field-hint">2–20 characters: letters, numbers, spaces, <code>_</code>, <code>-</code>, or <code>.</code></p>
+                </form>
+
+                <div class="rules-box">
+                    <h3>How to Play</h3>
+                    <ul>
+                        <li><strong>Phase 1 — Placement:</strong> Take turns placing up to <strong>3 pieces</strong> each on any empty node.</li>
+                        <li><strong>Phase 2 — Movement:</strong> Once all 3 pieces are placed, select one of your pieces and slide it along a connected line to an adjacent empty node (perimeter neighbors or center).</li>
+                        <li><strong>Win or Draw:</strong> First player to align 3 in a row wins. Repeated positions (3x) or 50 movement plies end in a draw.</li>
+                    </ul>
+                </div>
+            </section>
+        </main>
+
+        <!-- VIEW 2: LOBBY & MATCHMAKING -->
+        <main id="view-lobby" class="view">
+            <section class="lobby-header">
+                <div>
+                    <p class="muted small">Signed in as</p>
+                    <h2 id="lobby-username" class="lobby-user">Player</h2>
+                </div>
+                <button id="btn-change-name" class="btn btn-ghost btn-sm" type="button">Change Name</button>
+            </section>
+
+            <div class="mode-grid">
+                <!-- ONLINE PVP CARD -->
+                <section class="card mode-card">
+                    <div class="mode-card-head">
+                        <span class="mode-badge badge-online">Real-Time</span>
+                        <h3>Online Matchmaking</h3>
+                    </div>
+                    <p class="muted">Join the live waiting queue and get paired automatically with the next available player.</p>
+
+                    <div id="queue-idle-panel" class="mode-actions">
+                        <button id="btn-queue-online" class="btn btn-primary btn-block" type="button">Find Online Opponent</button>
+                    </div>
+
+                    <div id="queue-waiting-panel" class="queue-panel hidden">
+                        <div class="queue-spinner" aria-hidden="true"></div>
+                        <div class="queue-info">
+                            <p class="queue-title">Searching for an opponent...</p>
+                            <p id="queue-position-text" class="muted small">Waiting in queue</p>
+                        </div>
+                        <button id="btn-cancel-queue" class="btn btn-danger btn-block" type="button">Cancel Search</button>
+                    </div>
+                </section>
+
+                <!-- VS AI CARD -->
+                <section class="card mode-card">
+                    <div class="mode-card-head">
+                        <span class="mode-badge badge-ai">9 → 41 Policy NN</span>
+                        <h3>Play vs NeuralNetwork AI</h3>
+                    </div>
+                    <p class="muted">Challenge your external NeuralNetwork inference server with legal move masking.</p>
+
+                    <div class="option-group">
+                        <span class="option-label">Your piece</span>
+                        <div class="segmented" role="radiogroup" aria-label="Choose your piece">
+                            <button type="button" class="seg-btn active" data-ai-symbol="X">Play as X</button>
+                            <button type="button" class="seg-btn" data-ai-symbol="O">Play as O</button>
+                        </div>
+                    </div>
+
+                    <div class="option-group">
+                        <span class="option-label">First move</span>
+                        <div class="segmented" role="radiogroup" aria-label="Choose who moves first">
+                            <button type="button" class="seg-btn active" data-ai-first="HUMAN">Human First</button>
+                            <button type="button" class="seg-btn" data-ai-first="AI">AI First</button>
+                        </div>
+                    </div>
+
+                    <div id="ai-lobby-notice" class="ai-notice hidden" role="status"></div>
+
+                    <div class="mode-actions">
+                        <button id="btn-start-ai" class="btn btn-accent btn-block" type="button">Start AI Match</button>
+                    </div>
+                </section>
+
+                <!-- LOCAL PVP CARD -->
+                <section class="card mode-card">
+                    <div class="mode-card-head">
+                        <span class="mode-badge badge-local">Same Screen</span>
+                        <h3>Local Pass &amp; Play</h3>
+                    </div>
+                    <p class="muted">Two players take turns on the same PC or phone with full backend rule enforcement.</p>
+                    <div class="mode-actions">
+                        <button id="btn-start-local" class="btn btn-secondary btn-block" type="button">Start Local Match</button>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- VIEW 3: INTERACTIVE GAME BOARD -->
+        <main id="view-game" class="view">
+            <section class="scoreboard">
+                <div id="card-player-x" class="player-card player-x">
+                    <div class="player-symbol">X</div>
+                    <div class="player-meta">
+                        <span id="name-player-x" class="player-name">Player X</span>
+                        <span id="pieces-player-x" class="player-pieces">0 / 3 placed</span>
+                    </div>
+                </div>
+                <div class="vs-divider">VS</div>
+                <div id="card-player-o" class="player-card player-o">
+                    <div class="player-symbol">O</div>
+                    <div class="player-meta">
+                        <span id="name-player-o" class="player-name">Player O</span>
+                        <span id="pieces-player-o" class="player-pieces">0 / 3 placed</span>
+                    </div>
+                </div>
+            </section>
+
+            <section id="turn-banner" class="turn-banner" role="status" aria-live="polite">
+                <div class="turn-banner-main">
+                    <span id="phase-badge" class="phase-badge">Placement</span>
+                    <span id="turn-text" class="turn-text">Waiting for match state...</span>
+                </div>
+                <span id="ply-counter" class="ply-counter hidden"></span>
+            </section>
+
+            <section class="board-stage">
+                <div id="board-wrapper" class="board-wrapper">
+                    <svg id="board-svg" class="board-svg" viewBox="0 0 300 300" aria-hidden="true">
+                        <g id="svg-edges-base"></g>
+                        <g id="svg-ai-overlay"></g>
+                        <g id="svg-last-move"></g>
+                        <g id="svg-edges-legal"></g>
+                        <g id="svg-winning-line"></g>
+                    </svg>
+                    <div id="board-nodes" class="board-nodes" role="grid" aria-label="Mobile Tic-Tac-Toe Board"></div>
+                </div>
+            </section>
+
+            <section id="ai-telemetry-panel" class="card telemetry-card hidden">
+                <div class="telemetry-row">
+                    <div>
+                        <span class="telemetry-label">NeuralNetwork Inference</span>
+                        <strong id="ai-latency-value" class="telemetry-value">—</strong>
+                    </div>
+                    <label class="toggle-label">
+                        <input id="toggle-ai-probs" type="checkbox">
+                        <span>Show AI probabilities</span>
+                    </label>
+                </div>
+                <div id="ai-top-moves" class="ai-top-moves hidden"></div>
+                <div id="ai-retry-row" class="ai-retry-row hidden">
+                    <span class="muted small">AI inference failed on its turn.</span>
+                    <button id="btn-retry-ai" class="btn btn-accent btn-sm" type="button">Retry AI Move</button>
+                </div>
+            </section>
+
+            <section class="game-controls">
+                <button id="btn-play-again" class="btn btn-primary" type="button">Play Again</button>
+                <button id="btn-leave-match" class="btn btn-ghost" type="button">Back to Lobby</button>
+            </section>
+            <p id="rematch-hint" class="rematch-hint hidden" role="status"></p>
+        </main>
+    </div>
+
+    <script src="/app.js" defer></script>
 </body>
 </html>

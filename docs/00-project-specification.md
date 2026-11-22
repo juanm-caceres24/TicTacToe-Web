@@ -99,4 +99,4 @@ The TicTacToe-Web server acts as an HTTP/1.1 + JSON client against the external 
 | **Stage 2** | `v0.2.0` | External `configs/server.json`, CLI parser (`--help`), LAN/Tailscale/Public IP resolver, HTTP `NeuralNetworkClient` + mock HTTP tests | **Completed** |
 | **Stage 3** | `v0.3.0` | Exact Retrograde Analysis solver (cycle-free optimal tablebase), `DatasetGenMain` CSV exporter (`9 + 41`), `configs/tictactoe_nn_config.json` | **Completed** |
 | **Stage 4** | `v0.4.0` | Javalin 6 server, FIFO Online Matchmaking, concurrent `MatchManager`, async AI turns, REST + WebSocket `/ws` + E2E tests | **Completed** |
-| **Stage 5** | `v0.5.0` | Responsive vanilla HTML5/CSS3/JS frontend (desktop + mobile touch), SVG topology board, AI latency/probability overlay, final E2E verification | Planned |
+| **Stage 5** | `v0.5.0` | Responsive vanilla HTML5/CSS3/JS frontend (desktop + mobile touch), SVG topology board, AI latency/probability overlay, final E2E verification | **Completed** |

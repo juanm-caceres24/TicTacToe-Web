@@ -200,7 +200,28 @@ class WebServerIntegrationTest {
             HttpResponse.BodyHandlers.ofString()
         );
         assertEquals(200, root.statusCode());
-        assertTrue(root.body().contains("TicTacToe-Web"));
+        assertTrue(root.body().contains("Mobile Tic-Tac-Toe"));
+
+        HttpResponse<String> css = http.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/styles.css")).GET().build(),
+            HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(200, css.statusCode());
+        assertTrue(css.body().contains(".board-wrapper"));
+
+        HttpResponse<String> js = http.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/app.js")).GET().build(),
+            HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(200, js.statusCode());
+        assertTrue(js.body().contains("JOIN_LOBBY"));
+
+        // Path traversal must never expose files outside /web.
+        HttpResponse<String> traversal = http.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/..%2Fpom.xml")).GET().build(),
+            HttpResponse.BodyHandlers.ofString()
+        );
+        assertTrue(traversal.statusCode() == 400 || traversal.statusCode() == 404);
 
         HttpResponse<String> health = http.send(
             HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/health")).GET().build(),
