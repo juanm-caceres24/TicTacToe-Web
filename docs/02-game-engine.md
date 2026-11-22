@@ -69,4 +69,4 @@ Because the current phase is uniquely determined by whether the count of `+1.0` 
 ### Legal Move Masking (`MoveEncoder.selectBestLegalMove`)
 - Masks out all illegal indices before selecting `argmax`.
 - Handles both non-negative `Softmax` outputs (renormalized over legal moves) and raw negative logits (numerically stable masked softmax).
-- Resilient against `NaN` or infinite scores: never selects an illegal move and deterministically falls back to the first legal move if all legal scores are `NaN`.
+- Resilient against non-finite scores (`NaN`, `+Infinity`, `-Infinity`): non-finite values are never preferred over finite scores (and receive `0.0` probability mass while finite scores remain normalized); if all legal scores are non-finite, deterministically falls back to the first legal move with a uniform probability distribution.

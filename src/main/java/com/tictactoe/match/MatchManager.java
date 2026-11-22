@@ -137,10 +137,13 @@ public final class MatchManager implements AutoCloseable {
             return;
         }
 
+        boolean alreadyQueued = session.inQueue();
         Optional<MatchmakingQueue.PairedPlayers> paired = queue.enqueueOrPair(session);
         if (paired.isEmpty()) {
             int pos = Math.max(1, queue.positionOf(session));
-            auditLogger.logQueueJoin(session.sessionId(), session.remoteIp(), session.username(), pos);
+            if (!alreadyQueued) {
+                auditLogger.logQueueJoin(session.sessionId(), session.remoteIp(), session.username(), pos);
+            }
             session.send(ProtocolMessages.QueueJoinedMessage.of(pos));
             return;
         }
@@ -193,7 +196,9 @@ public final class MatchManager implements AutoCloseable {
             return;
         }
 
-        queue.remove(session);
+        if (queue.remove(session)) {
+            auditLogger.logQueueCancel(session.sessionId(), session.remoteIp(), session.username());
+        }
         leaveCurrentMatchInternal(session, false, "SWITCH_MODE");
 
         if (activeMatches.size() >= config.maxConcurrentMatches()) {
@@ -255,7 +260,9 @@ public final class MatchManager implements AutoCloseable {
             return;
         }
 
-        queue.remove(session);
+        if (queue.remove(session)) {
+            auditLogger.logQueueCancel(session.sessionId(), session.remoteIp(), session.username());
+        }
         leaveCurrentMatchInternal(session, false, "SWITCH_MODE");
 
         if (activeMatches.size() >= config.maxConcurrentMatches()) {
