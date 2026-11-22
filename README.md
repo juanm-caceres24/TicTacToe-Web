@@ -6,7 +6,7 @@ A standalone Java 21 web server for **Mobile Tic-Tac-Toe** (*Three Men's Morris*
 - **Local PvP** on the same screen.
 - **Responsive web UI** designed for both desktop and mobile browsers across LAN, Tailscale, and port-forwarded public connections.
 
-> **Current Status:** `v0.5.1` — Complete, audit-hardened release with responsive desktop/mobile frontend, SVG two-phase board, online matchmaking, local PvP, and `NeuralNetwork` AI integration.
+> **Current Status:** `v0.6.0` — Complete release with responsive desktop/mobile frontend, SVG two-phase board, online matchmaking, local PvP, `NeuralNetwork` AI integration, and rotating JSON Lines audit logging.
 
 ---
 
@@ -36,7 +36,7 @@ A standalone Java 21 web server for **Mobile Tic-Tac-Toe** (*Three Men's Morris*
 ./scripts/test_api.sh
 ```
 
-Override key `configs/server.json` options at launch time (`--config`, `--host`, `--port`, `--ai-host`, `--ai-port`, `--no-public-ip`):
+Override key `configs/server.json` options at launch time (`--config`, `--host`, `--port`, `--ai-host`, `--ai-port`, `--log-file`, `--no-public-ip`):
 
 ```bash
 ./scripts/run.sh --port 3000 --ai-host 127.0.0.1 --ai-port 8080
@@ -66,12 +66,14 @@ TicTacToe-Web/
 │   ├── 03-config-network-and-ai-client.md # Config schema, CLI flags, IP discovery, and AI client
 │   ├── 04-solver-and-dataset.md           # Exact Retrograde solver and CSV dataset format
 │   ├── 05-server-and-protocol.md          # Javalin server, matchmaking, REST & WebSocket protocol
-│   └── 06-web-frontend.md                 # Responsive vanilla UI, SVG board & AI overlay
+│   ├── 06-web-frontend.md                 # Responsive vanilla UI, SVG board & AI overlay
+│   └── 07-audit-logging.md                # File-only JSONL audit log, events & rolling rotation
 └── src/
     ├── main/
     │   ├── java/com/tictactoe/
     │   │   ├── Main.java                  # Server entry point (--help, CLI overrides, IP banner)
     │   │   ├── DatasetGenMain.java        # CLI entry point for optimal dataset generation
+    │   │   ├── audit/                     # File-only JSONL AuditLogger with rolling rotation
     │   │   ├── engine/                    # Pure Mobile Tic-Tac-Toe engine & MoveEncoder
     │   │   ├── config/                    # ServerConfig JSON loader, CliArgs parser & BuildInfo
     │   │   ├── net/                       # LAN, Tailscale (100.64.0.0/10), and Public IP resolver
@@ -81,6 +83,7 @@ TicTacToe-Web/
     │   │   └── web/                       # Javalin WebServer, RestController, GameWebSocketHandler
     │   └── resources/web/                 # Responsive zero-framework UI (index.html, styles.css, app.js)
     └── test/java/com/tictactoe/
+        ├── audit/                         # Append persistence, rolling rotation & log injection tests
         ├── engine/                        # Topology, rules, draw limits, and masking tests
         ├── config/                        # Config loading and CLI override tests
         ├── net/                           # Interface classification and mock public IP tests
@@ -101,3 +104,4 @@ TicTacToe-Web/
 - [Exact Retrograde Solver & Dataset Generator](docs/04-solver-and-dataset.md)
 - [Web Server, Matchmaking & Protocol](docs/05-server-and-protocol.md)
 - [Responsive Web Frontend](docs/06-web-frontend.md)
+- [JSON Lines Audit Logging](docs/07-audit-logging.md)

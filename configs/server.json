@@ -11,6 +11,14 @@
     "maxWsMessageBytes": 8192,
     "wsIdleTimeoutSeconds": 300
   },
+  "logging": {
+    "enabled": true,
+    "filePath": "logs/audit.log",
+    "logHttpRequests": true,
+    "trustProxyHeaders": false,
+    "maxFileSizeMb": 10,
+    "maxBackupFiles": 5
+  },
   "publicIpLookup": {
     "enabled": true,
     "url": "https://api.ipify.org",

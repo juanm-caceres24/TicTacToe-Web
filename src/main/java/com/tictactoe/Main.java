@@ -43,10 +43,20 @@ public final class Main {
             return;
         }
 
-        WebServer server = new WebServer(config);
+        long startedAtNanos = System.nanoTime();
+        WebServer server;
+        try {
+            server = new WebServer(config);
+        } catch (RuntimeException e) {
+            System.err.println("Startup error: " + e.getMessage());
+            System.exit(1);
+            return;
+        }
+
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("\nShutting down TicTacToe-Web server...");
-            server.close();
+            long uptimeMs = Math.max(0L, (System.nanoTime() - startedAtNanos) / 1_000_000L);
+            server.stopWithAudit("SHUTDOWN_HOOK", uptimeMs);
         }, "tictactoe-shutdown"));
 
         int activePort;
@@ -61,6 +71,10 @@ public final class Main {
 
         ResolvedAddresses addresses = NetworkAddressResolver.resolve(config, activePort);
         AiStatus aiStatus = server.aiClient().checkStatus();
+        server.auditLogger().logServerStart(addresses, config.aiServer().baseUrl(), aiStatus);
         System.out.println(addresses.formatStartupBanner(config.aiServer().baseUrl(), aiStatus));
+        if (config.logging().enabled()) {
+            System.out.println("  Audit Log   : " + config.logging().filePath());
+        }
     }
 }

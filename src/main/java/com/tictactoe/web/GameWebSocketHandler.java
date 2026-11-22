@@ -9,6 +9,8 @@ import com.tictactoe.match.MatchManager;
 import com.tictactoe.match.SessionSender;
 import io.javalin.Javalin;
 import io.javalin.websocket.WsContext;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,26 +26,29 @@ public final class GameWebSocketHandler {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final MatchManager matchManager;
+    private final boolean trustProxyHeaders;
     private final ConcurrentHashMap<String, SessionSender> senders = new ConcurrentHashMap<>();
 
-    public GameWebSocketHandler(MatchManager matchManager) {
+    public GameWebSocketHandler(MatchManager matchManager, boolean trustProxyHeaders) {
         this.matchManager = Objects.requireNonNull(matchManager, "matchManager must not be null");
+        this.trustProxyHeaders = trustProxyHeaders;
     }
 
     public void register(Javalin app) {
         app.ws("/ws", ws -> {
             ws.onConnect(ctx -> {
                 String sessionId = ctx.sessionId();
+                String clientIp = extractClientIp(ctx, trustProxyHeaders);
                 SessionSender sender = createSender(ctx);
                 senders.put(sessionId, sender);
-                matchManager.registerSession(sessionId, sender);
+                matchManager.registerSession(sessionId, clientIp, sender);
             });
 
             ws.onMessage(ctx -> handleTextMessage(ctx, ctx.message()));
 
             ws.onClose(ctx -> {
                 senders.remove(ctx.sessionId());
-                matchManager.unregisterSession(ctx.sessionId());
+                matchManager.unregisterSession(ctx.sessionId(), ctx.status());
             });
 
             ws.onError(ctx -> {
@@ -52,9 +57,35 @@ public final class GameWebSocketHandler {
                     LOG.debug("WebSocket error on session {}: {}", ctx.sessionId(), err.getMessage());
                 }
                 senders.remove(ctx.sessionId());
-                matchManager.unregisterSession(ctx.sessionId());
+                matchManager.unregisterSession(ctx.sessionId(), null);
             });
         });
+    }
+
+    /**
+     * Extracts the client IP from the TCP socket address, optionally honoring the leftmost
+     * {@code X-Forwarded-For} entry when {@code trustProxyHeaders} is enabled.
+     */
+    static String resolveClientIp(String socketIp, String forwardedForHeader, boolean trustProxyHeaders) {
+        if (trustProxyHeaders && forwardedForHeader != null && !forwardedForHeader.isBlank()) {
+            String first = forwardedForHeader.split(",", 2)[0].trim();
+            if (!first.isEmpty()) {
+                return first;
+            }
+        }
+        return (socketIp == null || socketIp.isBlank()) ? "unknown" : socketIp;
+    }
+
+    private static String extractClientIp(WsContext ctx, boolean trustProxyHeaders) {
+        String socketIp = null;
+        SocketAddress remote = ctx.session.getRemoteAddress();
+        if (remote instanceof InetSocketAddress inet) {
+            socketIp = inet.getAddress() != null
+                ? inet.getAddress().getHostAddress()
+                : inet.getHostString();
+        }
+        String forwardedFor = trustProxyHeaders ? ctx.header("X-Forwarded-For") : null;
+        return resolveClientIp(socketIp, forwardedFor, trustProxyHeaders);
     }
 
     private void handleTextMessage(WsContext ctx, String rawMessage) {

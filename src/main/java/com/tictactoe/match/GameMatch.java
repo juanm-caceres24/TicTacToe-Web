@@ -32,6 +32,8 @@ public final class GameMatch {
     private boolean aiThinking;
     private AiPrediction lastAiPrediction;
     private boolean closed;
+    private long roundStartedAtNanos;
+    private boolean endLogged;
 
     private GameMatch(
         String matchId,
@@ -53,6 +55,8 @@ public final class GameMatch {
         this.playerXName = Objects.requireNonNull(playerXName, "playerXName must not be null");
         this.playerOName = Objects.requireNonNull(playerOName, "playerOName must not be null");
         this.aiSymbol = aiSymbol;
+        this.roundStartedAtNanos = System.nanoTime();
+        this.endLogged = false;
     }
 
     public static GameMatch onlinePvp(
@@ -129,6 +133,33 @@ public final class GameMatch {
 
     public String playerOName() {
         return playerOName;
+    }
+
+    public String playerXIp() {
+        return playerX != null ? playerX.remoteIp() : null;
+    }
+
+    public String playerOIp() {
+        return playerO != null ? playerO.remoteIp() : null;
+    }
+
+    public synchronized long roundDurationMs() {
+        return Math.max(0L, (System.nanoTime() - roundStartedAtNanos) / 1_000_000L);
+    }
+
+    /**
+     * Atomically claims the one-time {@code MATCH_END} audit emission for the current round.
+     */
+    public synchronized boolean markEndLoggedIfNotYet() {
+        if (endLogged) {
+            return false;
+        }
+        endLogged = true;
+        return true;
+    }
+
+    public synchronized Player startingPlayer() {
+        return startingPlayer;
     }
 
     public Optional<Player> aiSymbol() {
@@ -306,12 +337,16 @@ public final class GameMatch {
             startingPlayer = startingPlayer.opponent();
             engine.reset(startingPlayer);
             lastAiPrediction = null;
+            roundStartedAtNanos = System.nanoTime();
+            endLogged = false;
             return true;
         }
 
         rematchVotes.clear();
         engine.reset(startingPlayer);
         lastAiPrediction = null;
+        roundStartedAtNanos = System.nanoTime();
+        endLogged = false;
         return true;
     }
 
