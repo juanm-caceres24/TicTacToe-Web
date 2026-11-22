@@ -73,7 +73,7 @@ The TicTacToe-Web server acts as an HTTP/1.1 + JSON client against the external 
   - Stage 1: Pure JDK 21 runtime (0 runtime dependencies), JUnit 5 for testing.
   - Stage 2: Jackson Databind (JSON config & AI HTTP client using JDK `java.net.http.HttpClient`).
   - Stage 4: Javalin 6 + `slf4j-simple` (HTTP static hosting, REST endpoints, and WebSockets on a single port).
-- **Network Startup Banner (Stage 2 / Stage 4):** Prints Local LAN IP, Tailscale IP (`100.64.0.0/10`), Public IP, and configured port at startup.
+- **Network Startup Banner:** Prints Local LAN IP, Tailscale IP (`100.64.0.0/10`), Public IP, configured port, live `NeuralNetwork` AI server status, and active JSONL audit log path at startup.
 - **Externalized Configuration:** Server bind settings, gameplay limits (`minUsernameLength`, `maxUsernameLength`, `repetitionLimit`, `maxMovementPlies`), HTTP/WebSocket transport limits, JSONL audit logging settings (`logging`), public IP lookup settings, and AI server parameters (`host`, `port`, timeouts, `workerThreads`) are loaded from `configs/server.json` and exposed to the frontend via `GET /api/config`. Key launch flags can be overridden via CLI (`--config`, `--host`, `--port`, `--ai-host`, `--ai-port`, `--log-file`, `--no-public-ip`, `-h`, `--help`).
 
 ---
@@ -103,3 +103,4 @@ The TicTacToe-Web server acts as an HTTP/1.1 + JSON client against the external 
 | **Stage 5** | `v0.5.0` | Responsive vanilla HTML5/CSS3/JS frontend (desktop + mobile touch), SVG topology board, AI latency/probability overlay, final E2E verification | **Completed** |
 | **Hardening** | `v0.5.1` | Audit fixes (WS reconnect recovery, `MoveEncoder` finite masking, IPv6 validation, `/api/config` frontend sync, transport & worker config, expanded test coverage) | **Completed** |
 | **Audit Logging** | `v0.6.0` | File-only JSON Lines (`logs/audit.log`) audit trail with ISO-8601 timestamps, rolling size-based log rotation, server lifecycle, client IP, match mode & disconnect auditing | **Completed** |
+| **Audit Polish** | `v0.6.1` | Single `HTTP_ACCESS` on `GET /`, preserved WebSocket `closeStatus` (`1009`), validated `X-Forwarded-For`, deduplicated queue events & targeted regression tests | **Completed** |

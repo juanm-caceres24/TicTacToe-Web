@@ -19,11 +19,11 @@ This document describes the standalone Javalin 6 server (`com.tictactoe.web`), c
 # Show CLI help
 ./scripts/run.sh --help
 
-# Run automated curl smoke test against the packaged shaded JAR
+# Run automated curl smoke test (HTTP, static assets, /api/config & JSONL audit log) against the shaded JAR
 ./scripts/test_api.sh
 ```
 
-At startup, `Main` prints a consolidated banner containing the **Local (LAN) IP**, **Tailscale IP (`100.64.0.0/10`)**, **Public IP** with the active port, and live health/compatibility status of `NeuralNetwork`. A JVM shutdown hook guarantees clean shutdown on `SIGINT` / `SIGTERM`.
+At startup, `Main` prints a consolidated banner containing the **Local (LAN) IP**, **Tailscale IP (`100.64.0.0/10`)**, **Public IP** with the active port, live health/compatibility status of `NeuralNetwork`, and the active JSONL **Audit Log** path (see `docs/07-audit-logging.md`). A JVM shutdown hook drains active sessions, logs `SERVER_STOP`, and closes all resources cleanly on `SIGINT` / `SIGTERM`.
 
 ---
 

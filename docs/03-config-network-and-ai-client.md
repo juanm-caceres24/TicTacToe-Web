@@ -78,6 +78,7 @@ Example console banner:
   Tailscale   : http://100.88.12.5:3000
   Public      : http://181.45.12.90:3000
   AI Server   : http://127.0.0.1:8080 [ONLINE | 9->41]
+  Audit Log   : logs/audit.log
 ==========================================================
 ```
 
