@@ -39,10 +39,13 @@ TicTacToe-Web/
 │   └── test.sh                         # Run JUnit 5 test suite
 ├── docs/
 │   ├── 00-project-specification.md     # Single source of truth
-│   └── 01-git-workflow.md              # Simplified Solo Git Flow guide
+│   ├── 01-git-workflow.md              # Simplified Solo Git Flow guide
+│   └── 02-game-engine.md               # Mobile Tic-Tac-Toe rules, topology, and 9->41 encoding
 └── src/
-    ├── main/java/com/tictactoe/        # Java 21 source packages
-    └── test/java/com/tictactoe/        # JUnit 5 test suites
+    ├── main/java/com/tictactoe/
+    │   └── engine/                     # Pure Mobile Tic-Tac-Toe engine & MoveEncoder (0 runtime deps)
+    └── test/java/com/tictactoe/
+        └── engine/                     # Unit tests for topology, rules, draw limits, and masking
 ```
 
 ---
@@ -51,3 +54,4 @@ TicTacToe-Web/
 
 - [Project Specification](docs/00-project-specification.md)
 - [Git Workflow](docs/01-git-workflow.md)
+- [Game Engine & 9→41 Encoding](docs/02-game-engine.md)

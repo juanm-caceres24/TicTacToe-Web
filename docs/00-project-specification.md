@@ -95,7 +95,7 @@ The TicTacToe-Web server acts as an HTTP/1.1 + JSON client against the external 
 
 | Milestone | Tag | Scope | Status |
 | :--- | :--- | :--- | :--- |
-| **Stage 1** | `v0.1.0` | Repo setup, Maven strict build, Git workflow docs, pure Mobile Tic-Tac-Toe game engine + `9 → 41` move encoder + JUnit 5 tests | **In Progress** |
+| **Stage 1** | `v0.1.0` | Repo setup, Maven strict build, Git workflow docs, pure Mobile Tic-Tac-Toe game engine + `9 → 41` move encoder + JUnit 5 tests | **Completed** |
 | **Stage 2** | `v0.2.0` | External `configs/server.json`, CLI parser (`--help`), LAN/Tailscale/Public IP resolver, HTTP `NeuralNetworkClient` + mock HTTP tests | Planned |
 | **Stage 3** | `v0.3.0` | Exact Retrograde Analysis solver (cycle-free optimal tablebase), `DatasetGenMain` CSV exporter (`9 + 41`), `configs/tictactoe_nn_config.json` | Planned |
 | **Stage 4** | `v0.4.0` | Javalin 6 server, FIFO Online Matchmaking, concurrent `MatchManager`, async AI turns, REST + WebSocket `/ws` + E2E tests | Planned |
