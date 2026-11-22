@@ -1,0 +1,19 @@
+{
+  "host": "0.0.0.0",
+  "port": 3000,
+  "maxConcurrentMatches": 100,
+  "maxUsernameLength": 20,
+  "repetitionLimit": 3,
+  "maxMovementPlies": 50,
+  "publicIpLookup": {
+    "enabled": true,
+    "url": "https://api.ipify.org",
+    "timeoutMs": 2000
+  },
+  "aiServer": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "connectTimeoutMs": 2000,
+    "requestTimeoutMs": 3000
+  }
+}
