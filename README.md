@@ -6,7 +6,7 @@ A standalone Java 21 web server for **Mobile Tic-Tac-Toe** (*Three Men's Morris*
 - **Local PvP** on the same screen.
 - **Responsive web UI** designed for both desktop and mobile browsers across LAN, Tailscale, and port-forwarded public connections.
 
-> **Current Status:** Stage 4 (`v0.4.0`) — Standalone Javalin 6 server, FIFO online matchmaking, REST + WebSocket `/ws` protocol, and async `NeuralNetwork` integration.
+> **Current Status:** Stage 5 (`v0.5.0`) — Complete release with responsive desktop/mobile frontend, SVG two-phase board, online matchmaking, local PvP, and `NeuralNetwork` AI integration.
 
 ---
 
@@ -20,20 +20,27 @@ A standalone Java 21 web server for **Mobile Tic-Tac-Toe** (*Three Men's Morris*
 ## Quick Start
 
 ```bash
-# Build shaded executable JAR and verify 0 warnings (-Xlint:all -Werror)
+# 1. Build shaded executable JAR and verify 0 warnings (-Xlint:all -Werror)
 ./scripts/build.sh --clean
 
-# Run the full JUnit 5 unit & WebSocket E2E test suite
+# 2. Run the full JUnit 5 unit & WebSocket E2E test suite
 ./scripts/test.sh
 
-# Start the standalone server (prints LAN, Tailscale, and Public URLs)
+# 3. (Optional) Generate the 9->41 optimal training CSV for your NeuralNetwork project
+./scripts/generate_dataset.sh
+
+# 4. Launch the standalone server (prints Local LAN, Tailscale, and Public URLs + AI status)
 ./scripts/run.sh
 
-# Run curl HTTP smoke tests against the packaged shaded JAR
+# 5. Run live HTTP & static-asset smoke tests against the shaded JAR
 ./scripts/test_api.sh
+```
 
-# Generate the exact 9->41 optimal training CSV for NeuralNetwork
-./scripts/generate_dataset.sh
+Override any `configs/server.json` option at launch time:
+
+```bash
+./scripts/run.sh --port 3000 --ai-host 127.0.0.1 --ai-port 8080
+./scripts/run.sh --help
 ```
 
 ---
@@ -50,7 +57,7 @@ TicTacToe-Web/
 │   ├── build.sh                           # Compile and package shaded JAR with strict warnings
 │   ├── test.sh                            # Run JUnit 5 test suite
 │   ├── run.sh                             # Launch standalone shaded JAR with CLI flags
-│   ├── test_api.sh                        # Live HTTP smoke test with curl
+│   ├── test_api.sh                        # Live HTTP & static-asset smoke test with curl
 │   └── generate_dataset.sh                # Generate data/tictactoe_dataset.csv via Retrograde Analysis
 ├── docs/
 │   ├── 00-project-specification.md        # Single source of truth
@@ -58,7 +65,8 @@ TicTacToe-Web/
 │   ├── 02-game-engine.md                  # Mobile Tic-Tac-Toe rules, topology, and 9->41 encoding
 │   ├── 03-config-network-and-ai-client.md # Config schema, CLI flags, IP discovery, and AI client
 │   ├── 04-solver-and-dataset.md           # Exact Retrograde solver and CSV dataset format
-│   └── 05-server-and-protocol.md          # Javalin server, matchmaking, REST & WebSocket protocol
+│   ├── 05-server-and-protocol.md          # Javalin server, matchmaking, REST & WebSocket protocol
+│   └── 06-web-frontend.md                 # Responsive vanilla UI, SVG board & AI overlay
 └── src/
     ├── main/
     │   ├── java/com/tictactoe/
@@ -71,7 +79,7 @@ TicTacToe-Web/
     │   │   ├── solver/                    # Cycle-free RetrogradeSolver & DatasetExporter
     │   │   ├── match/                     # MatchmakingQueue, GameMatch, concurrent MatchManager
     │   │   └── web/                       # Javalin WebServer, RestController, GameWebSocketHandler
-    │   └── resources/web/                 # Static frontend served at /
+    │   └── resources/web/                 # Responsive zero-framework UI (index.html, styles.css, app.js)
     └── test/java/com/tictactoe/
         ├── engine/                        # Topology, rules, draw limits, and masking tests
         ├── config/                        # Config loading and CLI override tests
@@ -79,7 +87,7 @@ TicTacToe-Web/
         ├── ai/                            # Mock NeuralNetwork HTTP integration tests
         ├── solver/                        # Full Bellman verification and CSV/CLI tests
         ├── match/                         # Matchmaking, rematch, and disconnect tests
-        └── web/                           # Full E2E Javalin REST + real WebSocket client tests
+        └── web/                           # Full E2E Javalin REST, static asset & WebSocket tests
 ```
 
 ---
@@ -92,3 +100,4 @@ TicTacToe-Web/
 - [Configuration, Network Discovery & AI Client](docs/03-config-network-and-ai-client.md)
 - [Exact Retrograde Solver & Dataset Generator](docs/04-solver-and-dataset.md)
 - [Web Server, Matchmaking & Protocol](docs/05-server-and-protocol.md)
+- [Responsive Web Frontend](docs/06-web-frontend.md)

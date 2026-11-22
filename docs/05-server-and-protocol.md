@@ -35,7 +35,7 @@ Static web files, REST endpoints, and WebSockets all share the **same configured
 | Endpoint | Method | Response |
 | :--- | :--- | :--- |
 | `/` | `GET` | Serves static frontend files from classpath `/web` |
-| `/api/health` | `GET` | `{"status":"ok","version":"0.4.0","connectedSessions":N,"queueSize":Q,"activeMatches":M}` |
+| `/api/health` | `GET` | `{"status":"ok","version":"0.5.0","connectedSessions":N,"queueSize":Q,"activeMatches":M}` |
 | `/api/ai/status` | `GET` | Live `NeuralNetwork` health and `9 → 41` compatibility snapshot (`available`, `inputSize`, `outputSize`, `summary`, `error`) |
 
 ### WebSocket Protocol (`GET /ws`, JSON text frames)
