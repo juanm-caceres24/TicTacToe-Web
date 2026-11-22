@@ -1,0 +1,23 @@
+{
+  "model_name": "mobile_tictactoe_9_to_41",
+  "description": "Policy network for Mobile Tic-Tac-Toe (3 pieces per player). Input: 9 player-relative board cells (-1, 0, +1). Output: 41 canonical actions (0..8 placements, 9..40 directed movements).",
+  "input_size": 9,
+  "output_size": 41,
+  "layers": [
+    { "type": "dense", "units": 128, "activation": "relu" },
+    { "type": "dense", "units": 128, "activation": "relu" },
+    { "type": "dense", "units": 41,  "activation": "softmax" }
+  ],
+  "training": {
+    "dataset_csv": "data/tictactoe_dataset.csv",
+    "has_header": false,
+    "loss": "categorical_cross_entropy",
+    "optimizer": "adam",
+    "learning_rate": 0.001,
+    "batch_size": 32,
+    "epochs": 150,
+    "validation_split": 0.1,
+    "shuffle": true,
+    "seed": 42
+  }
+}
