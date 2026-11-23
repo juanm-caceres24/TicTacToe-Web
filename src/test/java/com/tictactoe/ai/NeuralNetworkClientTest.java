@@ -359,9 +359,65 @@ class NeuralNetworkClientTest {
         assertEquals(AiClientException.Reason.UNREACHABLE, unreachableEx.reason());
     }
 
+    @Test
+    void interoperatesWithNeuralNetworkV060InfoLayersAndConnectionCloseResponses() throws Exception {
+        HttpServer server = startMockServer();
+        server.createContext("/health", ex -> sendJsonClose(ex, 200, "{\"status\":\"ok\"}"));
+        server.createContext("/info", ex -> sendJsonClose(
+            ex,
+            200,
+            "{\"input_size\":9,\"output_size\":41,\"num_layers\":3,\"parameters\":23081,"
+                + "\"layers\":["
+                + "{\"in_size\":9,\"out_size\":128,\"activation\":\"relu\"},"
+                + "{\"in_size\":128,\"out_size\":128,\"activation\":\"relu\"},"
+                + "{\"in_size\":128,\"out_size\":41,\"activation\":\"softmax\"}"
+                + "]}"
+        ));
+
+        double[] scores = new double[41];
+        scores[4] = 0.91;
+        scores[0] = 0.05;
+        String predictJson = "{\"output\":" + MAPPER.writeValueAsString(scores) + ",\"latency_us\":4}";
+        server.createContext("/predict", ex -> {
+            assertEquals("HTTP/1.1", ex.getProtocol());
+            sendJsonClose(ex, 200, predictJson);
+        });
+
+        NeuralNetworkClient client = clientFor(server, 1500);
+
+        // Consecutive requests over Connection: close must all succeed cleanly on one HttpClient.
+        AiStatus status = client.checkStatus();
+        assertTrue(status.isReady());
+        assertEquals(9, status.inputSize());
+        assertEquals(41, status.outputSize());
+        assertEquals(3, status.numLayers());
+        assertEquals(23_081L, status.parameters());
+        assertEquals("ONLINE | 9->41", status.summaryText());
+
+        GameEngine engine = new GameEngine();
+        AiPrediction first = client.predictMove(engine);
+        assertEquals(Move.placement(4), first.move());
+        assertEquals(4L, first.latencyUs());
+
+        engine.placePiece(4);
+        AiPrediction second = client.predictMove(engine);
+        assertEquals(Move.placement(0), second.move());
+        assertEquals(4L, second.latencyUs());
+    }
+
     private static void sendJson(HttpExchange exchange, int status, String json) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
+    }
+
+    private static void sendJsonClose(HttpExchange exchange, int status, String json) throws IOException {
+        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.getResponseHeaders().add("Connection", "close");
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
