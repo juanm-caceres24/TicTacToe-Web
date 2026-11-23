@@ -86,14 +86,14 @@ Example console banner:
 
 ## 3. External `NeuralNetwork` HTTP/1.1 Client (`com.tictactoe.ai`)
 
-`NeuralNetworkClient` uses JDK 21 `java.net.http.HttpClient` explicitly pinned to **`HTTP/1.1`** (avoiding unnecessary `h2c` upgrade headers against lightweight C++ HTTP servers) with independent connect and request timeouts.
+`NeuralNetworkClient` uses JDK 21 `java.net.http.HttpClient` explicitly pinned to **`HTTP/1.1`** (avoiding unnecessary `h2c` upgrade headers against lightweight C++ HTTP servers and interoperating cleanly with `NeuralNetwork` `v0.6.0`'s `Connection: close` responses) with independent connect and request timeouts.
 
 ### Endpoints Consumed
 | Endpoint | Method | Expected Response | Behavior |
 | :--- | :--- | :--- | :--- |
 | `/health` | `GET` | `200 OK` `{"status":"ok"}` | Verifies server reachability and health |
-| `/info` | `GET` | `200 OK` `{"input_size":9,"output_size":41,...}` | Validates strict `9 → 41` model compatibility |
-| `/predict` | `POST` | `200 OK` `{"output":[41 floats],"latency_us":12}` | Encodes board player-relative (`9` floats), masks illegal actions, returns `AiPrediction` |
+| `/info` | `GET` | `200 OK` `{"input_size":9,"output_size":41,"num_layers":3,"parameters":23081,"layers":[...]}` | Validates strict `9 → 41` model compatibility (extra `layers` metadata is accepted) |
+| `/predict` | `POST` | `200 OK` `{"output":[41 floats],"latency_us":12}` | Sends `{"input":[9 floats],"include_neurons":false}`, masks illegal actions, returns `AiPrediction` |
 
 ### Resilience & Error Classification
 - `checkStatus()` **never throws**; it returns an `AiStatus` snapshot (`ONLINE`, `INCOMPATIBLE`, `UNHEALTHY`, or `OFFLINE`) so the web UI can display clear notices without crashing the game server.

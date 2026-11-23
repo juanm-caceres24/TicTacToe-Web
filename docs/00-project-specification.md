@@ -104,3 +104,4 @@ The TicTacToe-Web server acts as an HTTP/1.1 + JSON client against the external 
 | **Hardening** | `v0.5.1` | Audit fixes (WS reconnect recovery, `MoveEncoder` finite masking, IPv6 validation, `/api/config` frontend sync, transport & worker config, expanded test coverage) | **Completed** |
 | **Audit Logging** | `v0.6.0` | File-only JSON Lines (`logs/audit.log`) audit trail with ISO-8601 timestamps, rolling size-based log rotation, server lifecycle, client IP, match mode & disconnect auditing | **Completed** |
 | **Audit Polish** | `v0.6.1` | Single `HTTP_ACCESS` on `GET /`, preserved WebSocket `closeStatus` (`1009`), validated `X-Forwarded-For`, deduplicated queue events & targeted regression tests | **Completed** |
+| **NN v0.6.0 Sync** | `v0.6.2` | Aligned `configs/tictactoe_nn_config.json` with strict `NeuralNetwork` `v0.6.0` schema (`model.layers`, `cce`, `adam`, `server`), verified `HTTP/1.1` + `Connection: close` interop & schema tests | **Completed** |

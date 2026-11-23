@@ -1,10 +1,13 @@
 package com.tictactoe.solver;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tictactoe.DatasetGenMain;
 import com.tictactoe.engine.BoardTopology;
 import com.tictactoe.engine.GameEngine;
@@ -13,7 +16,10 @@ import com.tictactoe.engine.Player;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -138,5 +144,97 @@ class DatasetExporterAndCliTest {
             IllegalArgumentException.class,
             () -> DatasetGenMain.DatasetCliArgs.parse(new String[] {"--output"})
         );
+    }
+
+    @Test
+    void neuralNetworkConfigTemplateConformsStrictlyToNeuralNetworkV060Schema() throws IOException {
+        Path configPath = Path.of("configs", "tictactoe_nn_config.json");
+        assertTrue(Files.isRegularFile(configPath), "Missing configs/tictactoe_nn_config.json");
+
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode root = mapper.readTree(configPath.toFile());
+        assertTrue(root.isObject());
+        assertEquals(Set.of("model", "training", "server"), fieldNamesOf(root));
+
+        // 1. Strict 'model' section (9 -> 128 relu -> 128 relu -> 41 softmax = 23,081 parameters)
+        JsonNode model = root.get("model");
+        assertEquals(Set.of("layers", "init_seed", "load_path", "save_path", "save_on_finish"), fieldNamesOf(model));
+        JsonNode layers = model.get("layers");
+        assertTrue(layers.isArray());
+        assertEquals(4, layers.size());
+
+        assertEquals(Set.of("size"), fieldNamesOf(layers.get(0)));
+        assertEquals(MoveEncoder.INPUT_SIZE, layers.get(0).get("size").asInt());
+
+        int[] expectedSizes = {MoveEncoder.INPUT_SIZE, 128, 128, MoveEncoder.OUTPUT_SIZE};
+        String[] expectedActivations = {null, "relu", "relu", "softmax"};
+        long totalParams = 0L;
+        for (int i = 1; i < expectedSizes.length; i++) {
+            JsonNode layer = layers.get(i);
+            assertEquals(Set.of("size", "activation"), fieldNamesOf(layer));
+            assertEquals(expectedSizes[i], layer.get("size").asInt());
+            assertEquals(expectedActivations[i], layer.get("activation").asText());
+            totalParams += (long) expectedSizes[i - 1] * expectedSizes[i] + expectedSizes[i];
+        }
+        assertEquals(23_081L, totalParams);
+        assertTrue(model.get("init_seed").isIntegralNumber());
+        assertEquals("", model.get("load_path").asText());
+        assertEquals("models/tictactoe_model.json", model.get("save_path").asText());
+        assertTrue(model.get("save_on_finish").asBoolean());
+
+        // 2. Strict 'training' section
+        JsonNode training = root.get("training");
+        Set<String> allowedTrainingKeys = Set.of(
+            "dataset_path",
+            "dataset_has_header",
+            "dataset_generator",
+            "generator_samples",
+            "generator_seed",
+            "loss",
+            "optimizer",
+            "epochs",
+            "batch_size",
+            "learning_rate",
+            "adam_beta1",
+            "adam_beta2",
+            "adam_epsilon",
+            "shuffle",
+            "num_threads",
+            "seed",
+            "validation_split",
+            "validation_shuffle",
+            "keep_best_validation_model",
+            "log_every_epochs"
+        );
+        Set<String> actualTrainingKeys = fieldNamesOf(training);
+        assertTrue(
+            allowedTrainingKeys.containsAll(actualTrainingKeys),
+            "Unexpected keys in training section: " + actualTrainingKeys
+        );
+        assertEquals("data/tictactoe_dataset.csv", training.get("dataset_path").asText());
+        assertFalse(training.get("dataset_has_header").asBoolean());
+        assertEquals("cce", training.get("loss").asText());
+        assertEquals("adam", training.get("optimizer").asText());
+        assertEquals(0.001, training.get("learning_rate").asDouble(), 1e-12);
+        assertTrue(training.get("epochs").asInt() > 0);
+        assertTrue(training.get("batch_size").asInt() > 0);
+        assertTrue(training.get("num_threads").asInt() >= 1);
+        assertTrue(training.get("keep_best_validation_model").asBoolean());
+
+        // 3. Strict 'server' section
+        JsonNode server = root.get("server");
+        assertEquals(Set.of("host", "port", "num_workers"), fieldNamesOf(server));
+        assertEquals("127.0.0.1", server.get("host").asText());
+        assertEquals(8080, server.get("port").asInt());
+        assertTrue(server.get("num_workers").asInt() >= 1);
+    }
+
+    private static Set<String> fieldNamesOf(JsonNode objectNode) {
+        Set<String> names = new HashSet<>();
+        Iterator<String> it = objectNode.fieldNames();
+        while (it.hasNext()) {
+            names.add(it.next());
+        }
+        return names;
     }
 }
