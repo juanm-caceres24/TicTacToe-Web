@@ -6,7 +6,7 @@ A standalone Java 21 web server for **Mobile Tic-Tac-Toe** (*Three Men's Morris*
 - **Local PvP** on the same screen.
 - **Responsive web UI** designed for both desktop and mobile browsers across LAN, Tailscale, and port-forwarded public connections.
 
-> **Current Status:** `v0.6.1` — Complete release with responsive desktop/mobile frontend, SVG two-phase board, online matchmaking, local PvP, `NeuralNetwork` AI integration, and rotating JSON Lines audit logging.
+> **Current Status:** `v0.6.2` — Complete release with responsive desktop/mobile frontend, SVG two-phase board, online matchmaking, local PvP, `NeuralNetwork` `v0.6.0` AI integration, and rotating JSON Lines audit logging.
 
 ---
 
@@ -52,7 +52,7 @@ TicTacToe-Web/
 ├── pom.xml
 ├── configs/
 │   ├── server.json                        # External server, transport, audit logging, IP lookup & AI config
-│   └── tictactoe_nn_config.json           # Reference 9->41 architecture config for NeuralNetwork
+│   └── tictactoe_nn_config.json           # Strict NeuralNetwork v0.6.0 9->41 training & server config template
 ├── scripts/
 │   ├── build.sh                           # Compile and package shaded JAR with strict warnings
 │   ├── test.sh                            # Run JUnit 5 test suite

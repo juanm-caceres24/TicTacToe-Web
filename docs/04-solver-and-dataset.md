@@ -58,4 +58,15 @@ Run the generator script:
 
 ## 4. Training Config Template (`configs/tictactoe_nn_config.json`)
 
-`configs/tictactoe_nn_config.json` provides a ready-to-use `9 → 128 (ReLU) → 128 (ReLU) → 41 (Softmax)` architecture configured with `CategoricalCrossEntropy` and `Adam` (`lr = 0.001`, `batch_size = 32`, `epochs = 150`). Adjust JSON key names only if your `NeuralNetwork/train_app` schema expects slightly different property names, while keeping `input_size = 9` and `output_size = 41`.
+`configs/tictactoe_nn_config.json` strictly conforms to the **`NeuralNetwork` `v0.6.0`** external configuration schema (which rejects unknown JSON keys across `model`, `model.layers[]`, `training`, and `server`):
+
+- **Architecture (`model.layers`):** `9 → 128 (relu) → 128 (relu) → 41 (softmax)` (`3` dense layers, `23,081` parameters), saving to `models/tictactoe_model.json`.
+- **Training (`training`):** `dataset_path: "data/tictactoe_dataset.csv"`, `dataset_has_header: false`, fused `loss: "cce"`, `optimizer: "adam"` (`learning_rate: 0.001`, `batch_size: 32`, `epochs: 150`), `validation_split: 0.1`, `keep_best_validation_model: true`, `num_threads: 4`.
+- **Inference server (`server`):** `host: "127.0.0.1"`, `port: 8080`, `num_workers: 4` — matching `configs/server.json`'s default `aiServer` target.
+
+Copy `data/tictactoe_dataset.csv` into your `NeuralNetwork/data/` folder (and use this template directly or `NeuralNetwork/configs/tictactoe.json`), then train and launch inference from the `NeuralNetwork` repository:
+
+```bash
+./build/release/apps/train_app configs/tictactoe.json --compact
+./build/release/apps/server_app configs/tictactoe.json
+```
